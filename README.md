@@ -29,5 +29,12 @@ This repository contains all the nessesary Python and Cython files to run the al
 1) Preprocessing SAR scenes, mainly calibration, speckle-filtering, orthorectification, and energy-band creation. 
 2) Classifying preprocessed SAR data as water/non-water using the RF model. 
 
-Information on how to prepare your environment to run this algorithm is presented in the included documentation. 
-Additional information on the scientific specifications of the algorithm in presented by Millard et al., 2020
+Information on how to prepare your environment to run the algorithm is presented in the included documentation PDF.
+
+Reference
+---------
+Koreen Millard, Nicholas Brown, Douglas Stiff & Alain Pietroniro (2020): Automated surface water detection from
+space: a Canada-wide, open-source, automated, near-real time solution, Canadian Water Resources Journal / Revue
+canadienne des ressources hydriques, DOI: 10.1080/07011784.2020.1816499
+
+
