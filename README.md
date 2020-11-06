@@ -1,5 +1,8 @@
 # WSC-SSWM
 
+This script using Random Forest machine learning to automatically extract water bodies from RCM data. The Random Forest 
+machine learning allows flexiblity for the script to be easily modified for any other Satellite input.
+
 The National Hydrologic Services (NHS) of Canada is responsible for the upkeep and distribution of data from some
 2500 gauging stations strategically places across the country to monitor Canadian water resources. While the data these
 stations collect is important to the regions they are located in, a majority of water bodies and systems in this country
