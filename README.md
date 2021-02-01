@@ -17,7 +17,7 @@ the RADARSAT Constellation Mission (RCM).
 RCM is a trio of radar satellites launched in June of 2019, that began collecting data in early 2020. SAR was chosen
 for an operational monitoring program such as this due to its ability to image at any time of day and through cloud
 cover, versus optical sensors that require sunlight and direct sight of the surface. Unlike Canada’s previous generations
-of radar satellite (RADARSAR-1 launched in 1995, and RADARSAT-2 launched in 2007), having three satellites in a
+of radar satellite (RADARSAT-1 launched in 1995, and RADARSAT-2 launched in 2007), having three satellites in a
 constellation allows for access to nearly the entire country each day. This large accessability allows NHS to monitor
 highly volatile waterbodies, such as those in the prairies, on a biweekly basis with high spatial resolution products
 (5m).  **Other satellite source data can easily be incorporated with only small modificaitons to the code to ingest them 
