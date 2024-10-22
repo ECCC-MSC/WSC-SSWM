@@ -262,9 +262,7 @@ if __name__ == "__main__":
     outpoly = os.path.splitext(img)[0] + "_classified_filt.gpkg"
     
     postprocess(img, outpoly, python, gdalpoly, window=window)
-    if args.high_estimate:
-        highpoly = os.path.splitext(img)[0] + "_classified.gpkg"
-        postprocess_highestimate(img, highpoly, python, gdalpoly)
+
 
 
 
