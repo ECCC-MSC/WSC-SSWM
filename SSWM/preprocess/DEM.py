@@ -1,13 +1,15 @@
 """ 
 This file contains functions to download and mosaic DEM tiles from a 
 variety of providers
+
+
+WARNING: EVERYTHING IN THIS FILE NEEDS TO BE UPDATED TO REFLECT CHANGES TO DEM DOWNLOADING. SEE DEMDOWNLOADER ON MY GITHUB PAGE
+-FitzyC
 """
 
-import gdal
+from osgeo import gdal, osr
 import glob
 import itertools
-import ogr
-import osr
 import os
 import re
 import tarfile
@@ -61,62 +63,7 @@ def get_tile_path_CDED(NTS):
     ftp_path = ftp_path + ".zip"
     
     return(ftp_path)
-    
-def get_tile_path_NED(lon=None, lat=None,  name=None, test=True):
-    """ Get http path to download a USGS NED tile over a particular coordinate
-    
-    Only valid over North America ( lon is always assumed to be positive )
-    
-    *Parameters*
-    
-    lon : int
-        Longitude (whole number) for corner of DEM tile
-    lat : int
-        Latitude (whole number) for corner of DEM tile
-    name : str, optional
-        If provided, use the name directly to produce link
-    test : boolean
-        Whether or not to test whether or not the file path is valid.
-        There are two possible nomenclature styles for NED tiles. If test is False
-        then the link may be invalid.
-        
-    *Returns*
-    
-    str
-        HTTP location for CDED DEM tile
-    
-    *Example*
-    
-    get_tile_path_NED(112, 56)
-    get_tile_path_NED(-112, 56)
-    get_tile_path_NED(name='n56w112')
-    """
-    if not (lon or name):
-        raise Exception("provide lat/lon or tile name")
-        
-    basepath = "http://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1/GridFloat/"
-    
-    if name is None:
-        name = NED_tile_name(lon, lat, fext=".zip")
-    else:
-        name = name + ".zip"
-        
-    fullpath = basepath + name
-    
 
-    if test:
-        try:
-            code = urllib.request.urlopen(fullpath).getcode()
-        
-        except urllib.error.HTTPError:
-            if lon is not None:
-                name = NED_tile_name(lon, lat, fext=".zip", v="2017")
-                fullpath = basepath + name
-            else:
-                fullpath = re.sub(name, "USGS_NED_1_" + name, fullpath)
-                fullpath = re.sub("\\.zip", "_GridFloat.zip", fullpath)
-
-    return(fullpath)
         
 def SRTM_tile_name(lon, lat):
     """ Build name of SRTM DEM file
@@ -158,40 +105,7 @@ def get_tile_path_SRTM(lon=None, lat=None, name=None):
         name = SRTM_tile_name(lon, lat)
         url = baseurl + name
     return url
-    
 
-def NED_tile_name(lon, lat, fext="", v="2013"):
-    """ Build name of NED DEM file
-    
-    *Parameters*
-    
-    lon : int
-        Longitude (whole number) for corner of DEM tile
-    lat : int
-        Lattiude (whole number) for corner of DEM tile
-    fext : str
-        File extension to append
-    v : str
-        Which version of the dataset to use. One of ["2013", "2017"]. Not all
-        tiles are available in each version.
-        
-    *Returns*
-    
-    str
-        File name of DEM tile for NED
-        
-    *Example*
-    
-    NED_tile_name(-110, 49, ".zip", "2017")
-    NED_tile_name(-110, 49, ".zip", "2013")
-    """
-    if v == "2013":
-        name = "n{:02d}w{:03d}{}".format(np.abs(lat), np.abs(lon), fext)
-    elif v == "2017":
-        name = "usgs_ned_1_n{:02d}w{:03d}_gridfloat{}".format(np.abs(lat), np.abs(lon), fext)
- 
-    return(name)
-    
 
 class SessionWithHeaderRedirection(requests.Session):
     AUTH_HOST = 'urs.earthdata.nasa.gov'
@@ -282,23 +196,21 @@ def download_and_unzip_SRTM(url, destfile, exdir, rmzip=True):
         os.remove(destfile)
     return(True)
     
-def get_tile_path_CDEM():
-    raise NotImplementedError()
-    
-def download_single_DEM(DEM_id, DEM_dir, replace=False, product="NED"):
+
+def download_single_DEM(DEM_id, DEM_dir, replace=False, product="CDED"):
     """ Download a DEM tile 
     
     *Parameters*
     
     DEM_id : str
-        Name or NTS sheet of tile to download. If product is "NED" or "SRTM", a name should
+        Name or NTS sheet of tile to download. If product is "CDED" or "SRTM", a name should
         be specified, but if product is "CDED", then a NTS sheet should be.
     DEM_dir : str 
         Path to which files are downloaded
     replace : boolean
         Whether or not existing files should be re-downloaded and overwritten
     product : str
-        Which DEM tile series should be downloaded: ('NED', 'CDED')
+        Which DEM tile series should be downloaded: ('CDED', 'CDED')
         
     *Returns*
     
@@ -308,10 +220,8 @@ def download_single_DEM(DEM_id, DEM_dir, replace=False, product="NED"):
         
     """
     output = True
-    
-    if product.upper() == "NED":
-        ftp_path = get_tile_path_NED(name = DEM_id)
-    elif product.upper() == "CDED":
+
+    if product.upper() == "CDED":
         ftp_path = get_tile_path_CDED(NTS = DEM_id)
     elif product.upper() == "SRTM":
         ftp_path = get_tile_path_SRTM(name = DEM_id)
@@ -406,17 +316,17 @@ def download_and_unzip(url, destfile, exdir, rmzip=True):
         
 
 
-def download_multiple_DEM(DEM, DEM_dir, product="NED"):
+def download_multiple_DEM(DEM, DEM_dir, product="CDED"):
     """ Download a list of DEM URLs. If they exist already, they are not downloaded
     
     *Parameters*
    
     DEM : list
-        List of DEM urls (NED) or NTS tiles (CDED)
+        List of DEM urls (CDED) or NTS tiles (CDED)
     DEM_dir : str 
         Path to which files are downloaded
     product : str
-        Which DEM tile series should be downloaded: ('NED', 'CDED')
+        Which DEM tile series should be downloaded: ('CDED', 'SRTM')
         
     *Returns*
    
@@ -437,7 +347,7 @@ def download_multiple_DEM(DEM, DEM_dir, product="NED"):
     files = [dem for sublist in files for dem in sublist]
     return(files)
         
-def create_DEM_mosaic(DEM, DEM_dir, dstfile, product="NED", 
+def create_DEM_mosaic(DEM, DEM_dir, dstfile, product="CDED",
                         vrt_only=False, format="GTiff"):
     """ Create a Mosaic from a list of DEM urls or NTS tiles. Missing tiles will
     be downloaded """
@@ -467,45 +377,6 @@ def create_DEM_mosaic(DEM, DEM_dir, dstfile, product="NED",
     
 def SRTM_tiles_from_extent(ext):
     return degree_tiles_from_extent(ext, SRTM_tile_name, yoff=-1)
-
-def NED_tiles_from_extent(ext):
-    """ Get a list of NED tiles required to cover a spatial extent 
-    
-    *Parameters*
-    
-    ext : dict
-        Dictionary with the following keys: {xmin, xmax, ymin, ymax} corresponding
-        to the spatial extent in WGS84 decimal degrees 
-    
-    *Returns*
-    
-    list
-        List of tile names required to cover specified spatial extent
-        
-    *Examples*
-    
-    E = {'xmin': -110 ,'xmax': -108,'ymin': 48 ,'ymax': 51 }
-    NED_tiles_from_extent(E)
-    """
-    
-    return degree_tiles_from_extent(ext, NED_tile_name)
-    # # unpack extent dictionary
-    # xmin = ext['xmin']
-    # xmax = ext['xmax']
-    # ymin = ext['ymin']
-    # ymax = ext['ymax']
-    # 
-    # # get all corner coordinates to cover extent
-    #         # +1 beacuse of 0 indexing 
-    # xrange = range(int(np.floor(xmin)), int(np.floor(xmax)) +1) 
-    # yrange = range(int(np.ceil(ymin)), int(np.ceil(ymax)) +1)
-    # pts = itertools.product(xrange, yrange)
-  
- #  #   # get tile index for all 
-    # f = lambda x: NED_tile_name(lon = x[0], lat = x[1])
-    # tiles =  [pth for pth in map(f, pts)]
-    # 
-    # return(tiles)
     
     
 def degree_tiles_from_extent(ext, tile_function, xoff=0, yoff=0):
@@ -662,8 +533,8 @@ def create_DEM_mosaic_from_extent(ext, dstfile, DEM_dir, product="CDED",
     DEM_dir : str
         Directory where DEM files are saved
     product : str
-        DEM source to use. One of ("NED", "CDED"). 
-    vrt_only : boolean  
+        DEM source to use. One of ("SRTM", "CDED").
+    vrt_only : boolean
         Whether to create a VRT as an output file or 
   
         
@@ -684,10 +555,8 @@ def create_DEM_mosaic_from_extent(ext, dstfile, DEM_dir, product="CDED",
                                   vrt_only = False)
     """ 
     
-    # 
-    if product.upper() == "NED":
-        tiles = NED_tiles_from_extent(ext)
-    elif product.upper() == "SRTM":
+    #
+    if product.upper() == "SRTM":
         tiles = SRTM_tiles_from_extent(ext)
     elif product.upper() == "CDED":
         tiles = NTS_tiles_from_extent(ext)
@@ -699,53 +568,5 @@ def create_DEM_mosaic_from_extent(ext, dstfile, DEM_dir, product="CDED",
                                 product=product, vrt_only=vrt_only)
     
     return(mosaic)
-  
-def DEMproj4(product):
-    """ return proj4 string or equivalent for DEM product """
-    P = {"CDED": "+proj=longlat +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +geoidgrids=HT2_0.gtx +no_defs",
-         "NED": "epsg: 4269 + 5703",
-         "CDEM": "+proj=longlat +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +geoidgrids=HT2_0.gtx +no_defs"
-         }
-    return(P[product.upper()])
-    
-    
-def gdalslope(DEM, dst, latlon = True):
-    if latlon:
-        scale = 111120
-    else:
-        scale  = 1
-    gdal.DEMProcessing(dst, DEM, "slope", scale=scale) 
-    
-def gdalTPI(DEM, dst, latlon = True):
-    gdal.DEMProcessing(dst, DEM, "TPI") 
 
-def egm96_to_wgs84_heights(dem, geoid):
-    
-    """
-    Convert heights above the EGM96 geoid to heights above the WGS84 ellipsoid,
-    for example, as required to use the RADARSAT-2 rational function model.        
-    """
-    
-    dem_ds = gdal.Open(dem, gdal.GA_Update)
-    # Load the EGM96 dataset (DEM ds is passed as an argument)
-    #egm96_ds = gdal.Open(os.path.join(os.path.dirname(ag.__file__), "etc", "WW15MGH_copy.tif"))  # File is located in the software directory
-    egm96_ds = gdal.Open(geoid)
-    
-    # Setup an in-memory raster using the DEM as a template
-    driver = gdal.GetDriverByName("MEM")
-    resamp_ds = driver.Create("", dem_ds.RasterXSize, dem_ds.RasterYSize, 1, gdal.GDT_Float32)
-    resamp_ds.SetProjection(dem_ds.GetProjection())
-    resamp_ds.SetGeoTransform(dem_ds.GetGeoTransform())
-
-    # Reproject / resample the EGM96 data to the DEM resolution / space.
-    gdal.ReprojectImage(egm96_ds, resamp_ds, egm96_ds.GetProjection(), dem_ds.GetProjection(), gdal.GRA_Cubic)
-
-    # Add (subtract) the difference between EGM96 and WGS84 and return the resulting DEM.
-    egm96 = resamp_ds.ReadAsArray()
-    dem = dem_ds.ReadAsArray().astype(np.float32)
-    dem[dem != -32768] += egm96[dem != -32768]
-
-    # re-write DEM
-    dem_ds.GetRasterBand(1).WriteArray(dem)
-    del dem_ds
     

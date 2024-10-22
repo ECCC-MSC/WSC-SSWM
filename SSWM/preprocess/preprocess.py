@@ -7,7 +7,7 @@
 #
 
 
-import gdal
+from osgeo import gdal
 import numpy as np
 import os
 import re
@@ -19,8 +19,8 @@ import zipfile
 
 from os import path
 
-from SSWM.preprocess.orthorectify import orthorectify_dem_rpc
-from SSWM.preprocess.preutils        import reproject_image_to_master, createvalidpixrast, RS2, ProcessSLC, incidence_angle_from_xml, cloneRaster, RS2, calibrate_in_place
+from SSWM.preprocess.orthorectify import orthorectify_dem_rpc, orthorectify_otb
+from SSWM.preprocess.preutils        import reproject_image_to_master, createvalidpixrast, ProcessSLC, incidence_angle_from_xml, cloneRaster, RS2, calibrate_in_place
 from SSWM.preprocess.filters      import filter_image, energy
 from SSWM.preprocess import DEM as de
 from SSWM.utils import bandnames
@@ -471,13 +471,14 @@ def preproRCM_bd(folder, DEM_dir, cleanup=True, product="CDED", filter=True):
 
     return(zip_out)
 
-def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
-    """ Preprocess Radarsat-2 file in preparation for classification
 
-    *Parameters*
+def preproS1(folder, DEM_dir, logger, cleanup=False, product="SRTM"):
+    """ Preprocess Sentinel-1 file in preparation for classification
 
-    product_xml : str
-        Path to data folder
+    **Parameters**
+
+    folder: str
+        Path to product.xml file for Sentinel-1 image
     DEM_dir : str
         Path to directory containing DEM files in appropriate folder hierarchy
     cleanup : boolean
@@ -485,13 +486,12 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     product : str
         Which DEM product to use.
 
-    *Returns*
+    **Returns**
 
     str
         Path to zipped output files
     """
 
-    #wd = path.dirname(folder)
     manifest = os.path.join(folder, 'manifest.safe')
 
     OUT_ENERGY = path.join(folder, "OUT_ENERGY.tif")
@@ -499,24 +499,19 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     OUT_ORTHO = path.join(folder, "OUT_ORTHO.tif")
     OUT_VALID = path.join(folder, "OUT_VALID.tif")
     OUT_TMP = path.join(folder, "OUT_TMP.tif")
+    DEM_FOLDER = path.join(folder, "DEM_FOLDER")
 
     OUT_FINAL = path.join(folder, path.basename(folder) + ".vrt")
 
     merge_files = []
     imagery_files = [f.strip() for f in re.findall(".*tiff", gdal.Info(manifest))]
 
-    ## CHECK FOR COMPLEX VALUES
-    # =================
-    #print("{:#^84}".format('  Check for any complex values (SLC) and convert  '))
-    #complex = ProcessSLC(product_xml)
-    #print("{:#^84}".format('  Done!  '))
-
     ## CALIBRATE & FILTER IMAGERY
-    # =================
+    # ===========================
 
     img = gdal.Open(manifest)
-    pol = [img.GetRasterBand(i+1).GetMetadata_Dict()['POLARISATION'] for i in range(img.RasterCount)]
-    # filterbands = [i for i in range(img.RasterCount) if img.GetRasterBand(i+1).GetDescription() in bandnames.DETECTED_BANDS]
+    pol = [img.GetRasterBand(i + 1).GetMetadata_Dict()['POLARISATION'] for i in range(img.RasterCount)]
+
     if img.RasterCount == 1:
         amp2e4 = np.moveaxis(np.atleast_3d(img.ReadAsArray()), 2, 0)[:, :, :]
     else:
@@ -530,30 +525,26 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
 
     for i, f in enumerate(imagery_files):
         imf = gdal.Open(f, gdal.GA_Update)
-        print("opened", f)
+        logger.info("opened : {}".format(f))
         imf.GetRasterBand(1).WriteArray(amp2e4[i, :, :])
         del imf
 
     del img
     # == end PSPOLFIL
 
-    print("{:#^84}".format('  Calibration and Filtering Complete  '))
+    logger.info('  Calibration and Filtering Complete  ')
 
     ## Get DEM and orthorectify RS2
     # ===============================
-    print("{:#^84}".format('  Begin Orthorectification  '))
+    logger.info('  Begin Orthorectification  ')
 
-    gdal.Warp(OUT_ORTHO, manifest, dstSRS='EPSG:4326')
-
-    img = gdal.Open(OUT_ORTHO, gdal.GA_ReadOnly)
-    for band in range(1, img.RasterCount + 1):
-        img.GetRasterBand(band).SetDescription(img.GetRasterBand(band).GetMetadata_Dict()['POLARISATION'])
-
-    del img
-
-    '''
     # get image extent (xmin, xmax, ymin, ymax) check for existence of kml
     extent = de.get_spatial_extent(manifest)
+
+    print("spatial extent of the images " + str(extent['xmax']))
+
+    if extent['ymax'] > 58:
+        product = 'CDED'
 
     # build dem
     de.create_DEM_mosaic_from_extent(extent, dstfile=TMP_DEM,
@@ -564,25 +555,45 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     os.remove(TMP_DEM)
     os.rename(tmpReproj, TMP_DEM)
 
-    orthorectify_dem_rpc(img, OUT_ORTHO, DEM=TMP_DEM)
-    '''
+    gdal.Warp(OUT_TMP, manifest, dstSRS='EPSG:4326')
+
+    gr = gdal.Open(OUT_TMP)  # Grap output pixel spacing, will be gridspacing for ortho
+    gt = gr.GetGeoTransform()
+    gsx = gt[1]
+    gsy = gt[5]
+
+    del (gr)
+
+    os.makedirs(DEM_FOLDER)
+    shutil.move(TMP_DEM, DEM_FOLDER)
+
+    """
+    TODO: Depreciated! 
+    """
+    orthorectify_otb(manifest, OUT_ORTHO, DEM_FOLDER, gsx)
 
     merge_files.append(OUT_ORTHO)
-    #del (img)
-    print("{:#^84}".format('  Orthorectification Complete '))
+
+    img = gdal.Open(OUT_ORTHO, gdal.GA_ReadOnly)
+    for band in range(1, img.RasterCount + 1):
+        img.GetRasterBand(band).SetDescription(pol[band - 1])
+
+    del (img)
+
+    logger.info('  Orthorectification Complete ')
 
     ## CREATE VALID BANDS GRID
     # ============================
-    print("{:#^84}".format('  Begin Valid pixel band creation  '))
+    logger.info('  Begin Valid pixel band creation  ')
     img = gdal.Open(OUT_ORTHO, gdal.GA_ReadOnly)
     createvalidpixrast(img, OUT_VALID, 1)
     merge_files.append(OUT_VALID)
     del (img)
-    print("{:#^84}".format('  Valid pixel band creation complete  '))
+    logger.info('  Valid pixel band creation complete  ')
 
     ## CREATE ENERGY TEXTURE GRID
     # ============================
-    print("{:#^84}".format('  Begin texture band creation  '))
+    logger.info('  Begin texture band creation  ')
     orig = gdal.Open(OUT_ORTHO)
     textr = cloneRaster(orig, OUT_ENERGY, ret=True, all_bands=True, coerce_dtype=gdal.GDT_Float32)
     for band in range(1, orig.RasterCount + 1):
@@ -593,7 +604,7 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
             tb.FlushCache()
             del tb
     del textr, orig
-    print("{:#^84}".format('  texture band creation complete  '))
+    logger.info('  texture band creation complete  ')
 
     ## CREATE MERGED VRT
     # ============================
@@ -606,7 +617,7 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     # The general trick is to make VRTs for each raster, then brute-force
     # paste them together and edit metadata afterwards
 
-    print("{:#^84}".format('  Creating VRT  '))
+    logger.info('  Creating VRT  ')
 
     # build vrt for ortho
     ortho_vrt = re.sub("tiff?$", "vrt", OUT_ORTHO)
@@ -649,11 +660,11 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     # write
     orth.write(OUT_FINAL)
 
-    print("{:#^84}".format('  VRT  Complete '))
+    logger.info('  VRT  Complete ')
 
     ## LABEL BANDS
     # =============================
-    print("{:#^84}".format('  Assign band metadata  '))
+    logger.info('  Assign band metadata  ')
 
     img = gdal.Open(OUT_FINAL, gdal.GA_Update)
     # for (i, description) in enumerate(pol + ['Valid Data Pixels', 'Slope', 'TPI']):
@@ -661,30 +672,30 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     for (i, description) in enumerate(pol + ['Valid Data Pixels'] + enpol):
         img.GetRasterBand(i + 1).SetDescription(description)
     del img
-    print("{:#^84}".format('   Band metadata complete  '))
+    logger.info('   Band metadata complete  ')
 
     ## ZIP
     # ==============================
 
-    print("{:#^84}".format('  Zipping output  '))
+    logger.info('  Zipping output  ')
 
     zip_out = re.sub("vrt", "tar", OUT_FINAL)
     with tarfile.open(zip_out, 'a') as myzip:
         for file in [OUT_ORTHO, OUT_VALID, OUT_ENERGY, OUT_FINAL]:
-            print("Adding file to archive: {}".format(path.basename(file)))
+            logger.info("Adding file to archive: {}".format(path.basename(file)))
             myzip.add(file, arcname=path.basename(file))
-    print("{:#^84}".format('   Zipping complete  '))
+    logger.info('   Zipping complete  ')
 
     ## CLEAN UP
     # =================
     if cleanup:
-        print("{:#^84}".format('  Begin File cleanup  '))
+        logger.info('  Begin File cleanup  ')
 
         for file in [TMP_DEM, OUT_ORTHO, OUT_VALID,
                      valid_vrt, ortho_vrt, energy_vrt, OUT_FINAL]:
             if os.path.isfile(file):
                 os.remove(file)
 
-        print("{:#^84}".format('  File cleanup complete  '))
+        logger.info('  File cleanup complete  ')
 
     return (zip_out)

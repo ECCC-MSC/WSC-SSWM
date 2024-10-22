@@ -2,7 +2,7 @@
 Postprocessing for probability images generated using random forest classification
 """
 
-import gdal
+from osgeo import gdal
 import geopandas as gp
 import logging
 import numpy as np

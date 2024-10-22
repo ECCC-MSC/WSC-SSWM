@@ -1,8 +1,9 @@
 #
 # Filters
-#
 
-import gdal
+#NOTE: Nothing in this file is used anymore, we use PSPOL. Not sure what is better
+#
+from osgeo import gdal
 import numpy as np
 
 from scipy.ndimage.filters import uniform_filter
@@ -87,15 +88,15 @@ def enhanced_lee_filter(d, rg_win, az_win, nlooks, damp=1):
 
     # Scalar parameters
     window = [az_win, rg_win]
-    cu = numpy.sqrt(1 / nlooks)
-    cmax = numpy.sqrt(1 + 2 / nlooks)
+    cu = np.sqrt(1 / nlooks)
+    cmax = np.sqrt(1 + 2 / nlooks)
 
     # For each polarisation
     for i in range(len(d.shape) -1):
 
         # Compute the spatial average, standard deviation and coefficient of variation
-        ci, im = moving_window_sd2(d[i], window, return_mean=True) # here, ci = sd
-        numpy.divide(ci, im, out=ci)
+        ci, im = moving_window_sd2(d[i], window, return_mean=True) # here, ci = sd   ##NO IDEA WHERE THIS IS
+        np.divide(ci, im, out=ci)
         # ci now equivalent to ci = sd / im
         
         # Original formulation is w = (-damp * (ci - cu)) / (cmax - ci)
@@ -105,20 +106,20 @@ def enhanced_lee_filter(d, rg_win, az_win, nlooks, damp=1):
         # filtered pixel is coming entirely from the image mean, and a weight of zero
         # will mean we keep the original pixel value. Intermediate weights will result
         # in a weighted contribution from each.
-        numpy.clip(ci, cu, cmax, out=ci)
-        with numpy.errstate(divide='ignore'):
+        np.clip(ci, cu, cmax, out=ci)
+        with np.errstate(divide='ignore'):
             w = (cu - ci) / (cmax - ci)
         if damp != 1:
-            numpy.multiply(damp, w, out=w)
-        numpy.exp(w, out=w)
+            np.multiply(damp, w, out=w)
+        np.exp(w, out=w)
 
         # Weight controls how much weight we give to the spatially averaged version,
         # relative to the original signal.
         # This part equivalent to d[i] = (im * w) + (d[i] * (1.0 - w))
-        numpy.multiply(im, w, out=im)
-        numpy.subtract(1.0, w, out=w)
-        numpy.multiply(d[i], w, out=d[i])
-        numpy.add(im, d[i], out=d[i])
+        np.multiply(im, w, out=im)
+        np.subtract(1.0, w, out=w)
+        np.multiply(d[i], w, out=d[i])
+        np.add(im, d[i], out=d[i])
         
     return d
     

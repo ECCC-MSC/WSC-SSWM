@@ -1,4 +1,4 @@
-import gdal
+from osgeo import gdal
 import numpy as np
 import os
 import re
@@ -619,8 +619,8 @@ class RS2(Radar):
     @classmethod
     def product_xml_pol_modes(cls, xml):
         """ Return a list of polarization modes associated with an RS-2 product.file """
-        files = product_xml_imagery_files
-        modes = re.findall("_([HV]*)\\.tif", ','.join(imagery_files))
+        files = cls.product_xml_imagery_files(xml)
+        modes = re.findall("_([HV]*)\\.tif", ','.join(files))
         return(modes)
     
     @classmethod
