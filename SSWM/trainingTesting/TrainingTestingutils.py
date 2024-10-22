@@ -1,28 +1,69 @@
 import numpy as np
 import zipfile
 
+from osgeo import gdal
+import os
+import re
+import xml.etree.ElementTree as ET
+
 from collections import deque
 
 printt = print
 def print(*args,**kwargs):
     printt(*args,flush=True,**kwargs)
 
+class bandnames:
+    """ Base class for classification tasks to standardize band names.
+
+    This is used to set the names of the bands that are used in the
+    classifications.  It can also be used to turn various data bands on or off
+    in the classification. Bands will be written in the order they are specified
+    in the DATA_BANDS attribute. This also controls the order of terms in the vector
+    that is passed to the classifier for each pixel.
+
+    Attributes
+    ----------
+    MASK_LABEL : list of str
+        The name of the band containing water information
+
+    DETECTED_BANDS : list of str
+        Data from the satellite. These bands will be filtered
+        and in some cases, derived bands will be calculated from them (for instance
+        energy texture bands will be calculated)
+
+    DERIVED_BANDS : list of str
+        These have been derived from the sensed data and should not have texture
+        bands created from them.
+
+    DATA_BANDS : list of str
+        The names of the bands that will be used to train and run the random forest model
+
+    VALID_PIX_BAND : list of str
+        Identifies the name of the band that identifies valid (1) and invalid (0) pixels
+
+    MIN_F1 : float
+        Minimum F1 score threshold below which image classification should be skipped.
+    """
+
+    MASK_LABEL = ['water_mask']
+
+    DETECTED_BANDS = ['HH', 'HV', 'VV', 'VH', 'RH', 'RV', 'SE_I', 'SE_P']
+
+    DERIVED_BANDS = ['energy_HH', 'energy_HV',
+                     'energy_VH', 'energy_VV',
+                     'energy_RH', 'energy_RV',
+                     'energy_SE_I', 'energy_SE_P']
+
+    DATA_BANDS = DETECTED_BANDS + DERIVED_BANDS  # ORDER MATTERS HERE
+
+    VALID_PIX_BAND = ['Valid Data Pixels']
+
+    MIN_F1 = 0.5
+
 class ModelModes:
     # Just so we can change it from here and not everywhere...
     TRAIN,EVAL,PREDICT=('TRAIN','EVAL','PREDICT')
-    
-def consume(iterator, n=None):
-    """"Advance the iterator n-steps ahead.
-        If n is none, consume entirely.
-        From python.org manual 9.7.2
-    """
-    # Use functions that consume iterators at C speed.
-    if n is None:
-        # feed the entire iterator into a zero-length deque
-        deque(iterator, maxlen=0)
-    else:
-        # advance to the empty slice starting at position n
-        next(slice(iterator, n, n), None)
+
         
 def rebin(a, new_shape):
     """
@@ -101,13 +142,186 @@ def bin_ndarray(ndarray, new_shape, operation='sum'):
         elif operation.lower() in ["mean", "average", "avg"]:
             ndarray = ndarray.mean(-1*(i+1))
     return ndarray
-        
-def npz_headers(npz):
-    with zipfile.ZipFile(npz) as archive:
-        for name in archive.namelist():
-            if not name.endswith('.npy'):
-                continue
-            npy = archive.open(name)
-            version = np.lib.format.read_magic(npy)
-            shape, fortran, dtype = np.lib.format._read_array_header(npy, version)
-            yield name[:-4], shape, dtype
+
+
+def copy_metadata(src, dst):
+    """ Copy metadata from one osgeo.gdal.Dataset to another
+
+    **Parameters**
+
+    src : osgeo.gdal.Dataset
+        An open gdal raster object
+    dst : osgeo.gdal.Dataset
+        A gdal raster object that is open for writing
+    """
+    for domain in src.GetMetadataDomainList() or ():
+        dst.SetMetadata(src.GetMetadata(domain), domain)
+
+
+def copy_georeferencing(src, dst):
+    """ Copy geotransform and/or GCPs from one osgeo.gdal.Dataset to another
+
+    **Parameters**
+
+    src : osgeo.gdal.Dataset
+        An open gdal raster object
+    dst : osgeo.gdal.Dataset
+        A gdal raster object that is open for writing
+    """
+    dst.SetGeoTransform(src.GetGeoTransform())
+    if src.GetGCPCount():
+        dst.SetGCPs(src.GetGCPs(), src.GetGCPProjection())
+    else:
+        dst.SetProjection(src.GetProjection())
+
+
+def copy_band_metadata(src, dst, bands):
+    """ Copy band metadata from one osgeo.gdal.Dataset to another
+
+    **Parameters**
+    -
+    src : osgeo.gdal.Dataset
+        An open gdal raster object
+    dst : osgeo.gdal.Dataset
+        A gdal raster object that is open for writing
+    bands : int
+        How many bands are in the image
+    """
+    for i in range(bands):
+        j = i + 1
+        bnd = dst.GetRasterBand(j)
+        in_bnd = src.GetRasterBand(j)
+
+        for domain in in_bnd.GetMetadataDomainList() or ():
+            bnd.SetMetadata(in_bnd.GetMetadata(domain), domain)
+
+        bnd.SetDescription(in_bnd.GetDescription())
+        if in_bnd.GetNoDataValue() is not None:
+            bnd.SetNoDataValue(in_bnd.GetNoDataValue())
+
+        bnd.FlushCache()
+        del bnd, in_bnd
+
+
+def write_array_like(img, newRasterfn, array, dtype=6, ret=True, driver='GTiff', copy_metadata=False):
+    ''' write numpy array to gdal-compatible raster.
+
+    **Parameters**
+
+    img : osgeo.gdal.Dataset or str
+        An open gdal raster object or path to file
+    newRasterfn : str
+        Filename of raster to create
+    array : array
+        array  to be written with shape (nrow[y], ncol[x], band)
+    dtype : int
+        What kind of data should raster contain?
+    ret : logical
+        Whether to return a file handle. If false, closes file
+
+    **Returns**
+
+    osgeo.gdal.Dataset
+        a handle for the new raster file
+    '''
+    if not isinstance(img, gdal.Dataset):
+        img = gdal.Open(img)
+
+    # get image dimensions
+    cols = img.RasterXSize
+    rows = img.RasterYSize
+    bands = np.atleast_3d(array).shape[2]
+
+    # create file
+    driver = gdal.GetDriverByName(driver)
+    dtype = dtype if dtype else img.GetRasterBand(1).DataType
+    outRaster = driver.Create(newRasterfn, cols, rows, bands, dtype)
+
+    # copy raster projection
+    copy_georeferencing(img, outRaster)
+
+    if copy_metadata:
+        copy_metadata(img, outRaster)
+        copy_band_metadata(img, outRaster, bands=bands)
+
+    # copy band data
+    for i in range(bands):
+        bnd = outRaster.GetRasterBand(i + 1)
+        if bands == 1:
+            bnd.WriteArray(array)
+        else:
+            bnd.WriteArray(array[:, :, i])
+        bnd.FlushCache()
+        bnd = None
+
+    # write data
+    outRaster.FlushCache()
+
+    if ret:
+        return (outRaster)
+
+    del outRaster
+
+
+def cloneRaster(img, newRasterfn, ret=True, all_bands=True, coerce_dtype=None, copy_data=False):
+    """ make empty raster container from gdal raster object. Does not copy data
+
+    **Parameters**
+
+    img : osgeo.gdal.Dataset
+        An open gdal raster object
+    newRasterfn str
+        Filename of raster to create
+    ret : boolean
+        Whether to return a file handle. If False, closes file
+    all_bands : boolean
+        Whether or not all bands should be copied or just the first one
+
+    **Returns**
+
+
+        a handle for the new raster file (if ret is True)
+
+    """
+    close = False
+    if not isinstance(img, gdal.Dataset):
+        close = True
+        img = gdal.Open(img)
+
+    # get image dimensions
+    cols = img.RasterXSize
+    rows = img.RasterYSize
+    bands = img.RasterCount if all_bands else 1
+
+    # create image
+    driver = gdal.GetDriverByName('GTiff')
+    dtype = coerce_dtype if coerce_dtype else img.GetRasterBand(1).DataType
+    outRaster = driver.Create(newRasterfn, cols, rows, bands, dtype)
+    outRaster.FlushCache()
+
+    print(newRasterfn)
+    # copy metadata
+    copy_metadata(img, outRaster)
+    copy_georeferencing(img, outRaster)
+    copy_band_metadata(img, outRaster, bands=bands)
+
+    if copy_data:
+        array = img.ReadAsArray()
+        for i in range(bands):
+            bnd = outRaster.GetRasterBand(i + 1)
+            if bands == 1:
+                bnd.WriteArray(array)
+            else:
+                bnd.WriteArray(array[i, :, :])
+            bnd.FlushCache()
+            bnd = None
+
+    # write data
+    outRaster.FlushCache()
+
+    if close:
+        del img
+    if ret:
+        return (outRaster)
+    outRaster = None
+
