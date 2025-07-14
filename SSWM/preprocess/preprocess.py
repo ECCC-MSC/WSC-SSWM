@@ -7,7 +7,7 @@
 #
 
 
-import gdal
+from osgeo import gdal
 import numpy as np
 import os
 import re
@@ -20,12 +20,10 @@ import zipfile
 from os import path
 
 from SSWM.preprocess.orthorectify import orthorectify_dem_rpc
-from SSWM.preprocess.preutils        import reproject_image_to_master, createvalidpixrast, RS2, ProcessSLC, incidence_angle_from_xml, cloneRaster, RS2, calibrate_in_place
-from SSWM.preprocess.filters      import filter_image, energy
-from SSWM.preprocess import DEM as de
+from SSWM.preprocess.preutils import reproject_image_to_master, createvalidpixrast, RS2, ProcessSLC, incidence_angle_from_xml, cloneRaster, RS2, calibrate_in_place
+from SSWM.preprocess.filters import lee_filter2
+import SSWM.preprocess.DEM as de
 from SSWM.utils import bandnames
-from SSWM.PSPOL.pspol import pspolfil as psp
-from SSWM.PSPOL.pspol import pspolfil_memsafe as psp_mem
 
 def preproRS2(product_xml, DEM_dir, cleanup=True, product="CDED"):
     """ Preprocess Radarsat-2 file in preparation for classification 
@@ -49,7 +47,6 @@ def preproRS2(product_xml, DEM_dir, cleanup=True, product="CDED"):
     
     wd = path.dirname(product_xml)
 
-    OUT_ENERGY  = path.join(wd, "OUT_ENERGY.tif")
     TMP_DEM     = path.join(wd, "TMP_DEM.tif")
     OUT_ORTHO   = path.join(wd, "OUT_ORTHO.tif")
     OUT_VALID   = path.join(wd, "OUT_VALID.tif")
@@ -83,20 +80,14 @@ def preproRS2(product_xml, DEM_dir, cleanup=True, product="CDED"):
         amp2e4 = np.moveaxis(np.atleast_3d(img.ReadAsArray()), 2, 0)[:,:,:] 
     else:
         amp2e4 = img.ReadAsArray()[:,:,:]
-    
 
-    pow = np.square(amp2e4 / 2e4, dtype='float64')
-    totpow = np.sum(pow, axis=0)
-    
-    filtered = psp_mem(img=pow, P=totpow, numlook=1, winsize=5, pieces=5)
-    amp2e4[:] = np.sqrt(filtered) * 2e4
-    
-    for i, f in enumerate(imagery_files):
-        imf = gdal.Open(f, gdal.GA_Update)
-        print("opened",f)
-        imf.GetRasterBand(1).WriteArray(amp2e4[i,:,:])
-        del imf
-        
+    for band_i in range(0, img.RasterCount):
+        print("band: {}".format(band_i + 1))
+        # create filtered data and write to file
+        filtered = lee_filter2(amp2e4[band_i, :, :], window=(3, 3))
+        # amp2e4[:] = np.sqrt(filtered) * 2e4
+        img.GetRasterBand(band_i + 1).WriteArray(filtered[:, :])
+
     del img
     #== end PSPOLFIL
     
@@ -139,21 +130,6 @@ def preproRS2(product_xml, DEM_dir, cleanup=True, product="CDED"):
     merge_files.append(OUT_VALID)
     del(img)
     print("{:#^84}".format('  Valid pixel band creation complete  '))
-    
-    ## CREATE ENERGY TEXTURE GRID
-    #============================ 
-    print("{:#^84}".format('  Begin texture band creation  '))
-    orig = gdal.Open(OUT_ORTHO)
-    textr = cloneRaster(orig, OUT_ENERGY, ret=True, all_bands = True, coerce_dtype=gdal.GDT_Float32)
-    for band in range(1, orig.RasterCount + 1):
-        if orig.GetRasterBand(band).GetDescription() in bandnames.DETECTED_BANDS:
-            e = energy(orig.GetRasterBand(band).ReadAsArray(), 5)
-            tb = textr.GetRasterBand(band)
-            tb.WriteArray(e)
-            tb.FlushCache()
-            del tb
-    del textr, orig
-    print("{:#^84}".format('  texture band creation complete  '))
 
     ## CREATE MERGED VRT
     #============================
@@ -189,24 +165,6 @@ def preproRS2(product_xml, DEM_dir, cleanup=True, product="CDED"):
     root[j].attrib['band'] = str(j-1)
     root[j].remove(root[j][0])
     j += 1
-    
-    
-    ## build vrt for energy
-    # build vrt 
-    energy_vrt = re.sub("tiff?$", "vrt", OUT_ENERGY)
-    gdal.BuildVRT(energy_vrt, OUT_ENERGY)
-    
-    # read XML
-    eng = ET.parse(energy_vrt)
-    engbands = eng.findall("VRTRasterBand")
-    
-    # insert and modify
-    for (i, x) in enumerate(engbands):
-        root.insert(j, x)
-        root[j].attrib['band'] = str(j-1)
-        if i==0:
-            root[j].remove(root[j][0])
-        j += 1
         
     # write
     orth.write(OUT_FINAL)
@@ -232,7 +190,7 @@ def preproRS2(product_xml, DEM_dir, cleanup=True, product="CDED"):
     
     zip_out = re.sub("vrt", "tar", OUT_FINAL)
     with tarfile.open(zip_out, 'a') as myzip:
-        for file in [OUT_ORTHO, OUT_VALID, OUT_ENERGY, OUT_FINAL]:
+        for file in [OUT_ORTHO, OUT_VALID, OUT_FINAL]:
             print("Adding file to archive: {}".format(path.basename(file)))
             myzip.add(file, arcname=path.basename(file))
     print("{:#^84}".format('   Zipping complete  '))
@@ -243,7 +201,7 @@ def preproRS2(product_xml, DEM_dir, cleanup=True, product="CDED"):
         print("{:#^84}".format('  Begin File cleanup  '))
         
         for file in [TMP_DEM, OUT_ORTHO, OUT_VALID, 
-                    valid_vrt, ortho_vrt, energy_vrt, OUT_FINAL]:
+                    valid_vrt, ortho_vrt, OUT_FINAL]:
             if os.path.isfile(file):
                 os.remove(file)
 
@@ -284,12 +242,10 @@ def preproRCM_bd(folder, DEM_dir, cleanup=True, product="CDED", filter=True):
         sys.exit(1)
 
     wd = path.dirname(tif)
-    gdinfo = gdal.Info(tif)
 
     TMP_DEM     = path.join(wd, "TMP_DEM.tif")
     OUT_ORTHO   = path.join(wd, "OUT_ORTHO.tif")
     OUT_VALID   = path.join(wd, "OUT_VALID.tif")
-    OUT_ENERGY  = path.join(wd, "OUT_ENERGY.tif")
     #OUT_FINAL  = path.splitext(tif)[0] + ".vrt"
     OUT_FINAL   = os.path.join(folder, os.path.basename(folder) + ".vrt")
     
@@ -303,22 +259,21 @@ def preproRCM_bd(folder, DEM_dir, cleanup=True, product="CDED", filter=True):
         cloneRaster(backup_name, tif, ret=False, all_bands=True, coerce_dtype=6, copy_data=True)
         
         img = gdal.Open(tif , gdal.GA_Update)
-        pol = [img.GetRasterBand(i + 1).GetDescription() for i in range(img.RasterCount)]
         
-        filterbands = [i for i in range(img.RasterCount) if img.GetRasterBand(i+1).GetDescription() in bandnames.DETECTED_BANDS]
+        filterbands = [i for i in range(img.RasterCount) if img.GetRasterBand(i+1).GetDescription() in bandnames.DATA_BANDS]
         if img.RasterCount == 1:
             amp2e4 = np.moveaxis(np.atleast_3d(img.ReadAsArray()), 2, 0)[filterbands,:,:] 
         else:
             amp2e4 = img.ReadAsArray()[filterbands,:,:]
          
-        pow = np.square(amp2e4 / 2e4, dtype='float64')
-        totpow = np.sum(pow, axis=0)
-        filtered = psp(img=pow, P=totpow, numlook=1, winsize=5)
-        amp2e4[:] = np.sqrt(filtered) * 2e4
-        
-        
-        for i, bnd in enumerate(filterbands):
-            img.GetRasterBand(bnd+1).WriteArray(amp2e4[i,:,:])
+        #pow = np.square(amp2e4 / 2e4, dtype='float64')
+
+        for band_i in range(0, img.RasterCount):
+            print("band: {}".format(band_i + 1))
+            # create filtered data and write to file
+            filtered = lee_filter2(amp2e4[band_i, :, :], window=(3,3))
+            #amp2e4[:] = np.sqrt(filtered) * 2e4
+            img.GetRasterBand(band_i + 1).WriteArray(filtered[:, :])
    
         del img
         ## End test filter block
@@ -334,7 +289,7 @@ def preproRCM_bd(folder, DEM_dir, cleanup=True, product="CDED", filter=True):
     
     # get image extent (xmin, xmax, ymin, ymax) check for existence of kml
     extent = de.get_spatial_extent(tif)
-    
+
     # build dem
     de.create_DEM_mosaic_from_extent(extent, dstfile=TMP_DEM, 
                                        DEM_dir = DEM_dir, product=product)
@@ -356,22 +311,6 @@ def preproRCM_bd(folder, DEM_dir, cleanup=True, product="CDED", filter=True):
     createvalidpixrast(img, OUT_VALID, 1)
     del(img)
     print("{:#^84}".format('  Valid pixel band creation complete  '))
-    
-
-    ## CREATE ENERGY TEXTURE GRID
-    #============================ 
-    print("{:#^84}".format('  Begin texture band creation  '))
-    orig = gdal.Open(OUT_ORTHO)
-    textr = cloneRaster(orig, OUT_ENERGY, ret=True, all_bands = True, coerce_dtype=gdal.GDT_Float32)
-    for band in range(1, orig.RasterCount + 1):
-        if orig.GetRasterBand(band).GetDescription() in bandnames.DETECTED_BANDS:
-            e = energy(orig.GetRasterBand(band).ReadAsArray(), 5)
-            tb = textr.GetRasterBand(band)
-            tb.WriteArray(e)
-            tb.FlushCache()
-            del tb
-    del textr, orig
-    print("{:#^84}".format('  texture band creation complete  '))
     
     
     ## CREATE MERGED VRT
@@ -407,23 +346,6 @@ def preproRCM_bd(folder, DEM_dir, cleanup=True, product="CDED", filter=True):
     root[j].attrib['band'] = str(j-1)
     root[j].remove(root[j][0])
     j += 1
-    
-    ## build vrt for energy
-    # build vrt 
-    energy_vrt = re.sub("tiff?$", "vrt", OUT_ENERGY)
-    gdal.BuildVRT(energy_vrt, OUT_ENERGY)
-    
-    # read XML
-    eng = ET.parse(energy_vrt)
-    engbands = eng.findall("VRTRasterBand")
-    
-    # insert and modify
-    for (i, x) in enumerate(engbands):
-        root.insert(j, x)
-        root[j].attrib['band'] = str(j-1)
-        if i==0:
-            root[j].remove(root[j][0])
-        j += 1
         
     # write
     orth.write(OUT_FINAL)
@@ -433,15 +355,7 @@ def preproRCM_bd(folder, DEM_dir, cleanup=True, product="CDED", filter=True):
     ## LABEL BANDS
     #=============================
     print("{:#^84}".format('  Assign band metadata  '))
-    
-    img = gdal.Open(OUT_FINAL, gdal.GA_Update)
-    # for (i, description) in enumerate(pol + ['Valid Data Pixels', 'Slope', 'TPI']):
-    enpol = ['energy_'  + p for p in pol]
-    for (i, description) in enumerate(pol  + ['Valid Data Pixels'] + enpol):
-        img.GetRasterBand(i + 1).SetDescription(description)
-    del img
-    print("{:#^84}".format('   Band metadata complete  '))
-    
+
     ## ZIP
     #==============================
     
@@ -449,7 +363,7 @@ def preproRCM_bd(folder, DEM_dir, cleanup=True, product="CDED", filter=True):
     
     zip_out = re.sub("vrt", "tar", OUT_FINAL)
     with tarfile.open(zip_out, 'a') as myzip:
-        for file in [OUT_ORTHO, OUT_VALID, OUT_ENERGY, OUT_FINAL]:
+        for file in [OUT_ORTHO, OUT_VALID, OUT_FINAL]:
             print("Adding file to archive: {}".format(path.basename(file)))
             myzip.add(file, arcname=path.basename(file))
     print("{:#^84}".format('   Zipping complete  '))
@@ -459,8 +373,8 @@ def preproRCM_bd(folder, DEM_dir, cleanup=True, product="CDED", filter=True):
     if cleanup:
         print("{:#^84}".format('  Begin File cleanup  '))
         
-        for file in [TMP_DEM, OUT_ORTHO, OUT_VALID, OUT_ENERGY,
-                    valid_vrt, ortho_vrt, energy_vrt, OUT_FINAL]:
+        for file in [TMP_DEM, OUT_ORTHO, OUT_VALID,
+                    valid_vrt, ortho_vrt, OUT_FINAL]:
             if os.path.isfile(file):
                 os.remove(file)
             
@@ -522,17 +436,12 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     else:
         amp2e4 = img.ReadAsArray()[:, :, :]
 
-    pow = np.square(amp2e4 / 2e4, dtype='float64')
-    totpow = np.sum(pow, axis=0)
-
-    filtered = psp_mem(img=pow, P=totpow, numlook=1, winsize=5, pieces=5)
-    amp2e4[:] = np.sqrt(filtered) * 2e4
-
-    for i, f in enumerate(imagery_files):
-        imf = gdal.Open(f, gdal.GA_Update)
-        print("opened", f)
-        imf.GetRasterBand(1).WriteArray(amp2e4[i, :, :])
-        del imf
+    for band_i in range(0, img.RasterCount):
+        print("band: {}".format(band_i + 1))
+        # create filtered data and write to file
+        filtered = lee_filter2(amp2e4[band_i, :, :], window=(3, 3))
+        # amp2e4[:] = np.sqrt(filtered) * 2e4
+        img.GetRasterBand(band_i + 1).WriteArray(filtered[:, :])
 
     del img
     # == end PSPOLFIL
@@ -580,20 +489,6 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     del (img)
     print("{:#^84}".format('  Valid pixel band creation complete  '))
 
-    ## CREATE ENERGY TEXTURE GRID
-    # ============================
-    print("{:#^84}".format('  Begin texture band creation  '))
-    orig = gdal.Open(OUT_ORTHO)
-    textr = cloneRaster(orig, OUT_ENERGY, ret=True, all_bands=True, coerce_dtype=gdal.GDT_Float32)
-    for band in range(1, orig.RasterCount + 1):
-        if orig.GetRasterBand(band).GetDescription() in bandnames.DETECTED_BANDS:
-            e = energy(orig.GetRasterBand(band).ReadAsArray(), 5)
-            tb = textr.GetRasterBand(band)
-            tb.WriteArray(e)
-            tb.FlushCache()
-            del tb
-    del textr, orig
-    print("{:#^84}".format('  texture band creation complete  '))
 
     ## CREATE MERGED VRT
     # ============================
@@ -670,7 +565,7 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
 
     zip_out = re.sub("vrt", "tar", OUT_FINAL)
     with tarfile.open(zip_out, 'a') as myzip:
-        for file in [OUT_ORTHO, OUT_VALID, OUT_ENERGY, OUT_FINAL]:
+        for file in [OUT_ORTHO, OUT_VALID, OUT_FINAL]:
             print("Adding file to archive: {}".format(path.basename(file)))
             myzip.add(file, arcname=path.basename(file))
     print("{:#^84}".format('   Zipping complete  '))

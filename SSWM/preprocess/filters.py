@@ -2,7 +2,7 @@
 # Filters
 #
 
-import gdal
+from osgeo import gdal
 import numpy as np
 
 from scipy.ndimage.filters import uniform_filter
@@ -82,47 +82,7 @@ def lee_filter(img, window = (5,5)):
 
     return d
     
-def enhanced_lee_filter(d, rg_win, az_win, nlooks, damp=1):
-    """PCI-style Enhanced Lee filter after Lopes, 1990."""
-
-    # Scalar parameters
-    window = [az_win, rg_win]
-    cu = numpy.sqrt(1 / nlooks)
-    cmax = numpy.sqrt(1 + 2 / nlooks)
-
-    # For each polarisation
-    for i in range(len(d.shape) -1):
-
-        # Compute the spatial average, standard deviation and coefficient of variation
-        ci, im = moving_window_sd2(d[i], window, return_mean=True) # here, ci = sd
-        numpy.divide(ci, im, out=ci)
-        # ci now equivalent to ci = sd / im
-        
-        # Original formulation is w = (-damp * (ci - cu)) / (cmax - ci)
-        # Here, by clipping, we will obtain a value of 0 where ci <= cu,
-        # and a value of -inf where ci >= cmax. After the exp, these two
-        # values will be 1 and 0 respectively. A weight of 1 will make it so that
-        # filtered pixel is coming entirely from the image mean, and a weight of zero
-        # will mean we keep the original pixel value. Intermediate weights will result
-        # in a weighted contribution from each.
-        numpy.clip(ci, cu, cmax, out=ci)
-        with numpy.errstate(divide='ignore'):
-            w = (cu - ci) / (cmax - ci)
-        if damp != 1:
-            numpy.multiply(damp, w, out=w)
-        numpy.exp(w, out=w)
-
-        # Weight controls how much weight we give to the spatially averaged version,
-        # relative to the original signal.
-        # This part equivalent to d[i] = (im * w) + (d[i] * (1.0 - w))
-        numpy.multiply(im, w, out=im)
-        numpy.subtract(1.0, w, out=w)
-        numpy.multiply(d[i], w, out=d[i])
-        numpy.add(im, d[i], out=d[i])
-        
-    return d
-    
-def enhanced_lee(img , looks, window=7, df=1):
+def enhanced_lee_filter(img , looks, window=7, df=1):
     """ Apply enhanced lee filter to image.  Does not modify original.
     
     Enhanced lee filter following Lopes et al. (1990) (PCI implementation)
@@ -212,7 +172,6 @@ def moving_window_sd(data, window, return_mean=False, return_variance=False):
     else:
         return t2
 
-
 def window_stdev(img, window, img_mean=None, img_sqr_mean=None):
     """ Calculate standard deviation filter for an image
     
@@ -240,30 +199,8 @@ def window_stdev(img, window, img_mean=None, img_sqr_mean=None):
     std = np.sqrt(img_sqr_mean - img_mean**2)
     
     return(std)
-
-def energy(img, window):
-    """ Apply energy texture filter to an image. Does not modify original.
     
-    *Parameters*
-   
-    img : numpy array  
-        Array to which filter is applied
-    window : int
-        Size of filter
-        
-    *Returns*
-    
-    array   
-        Filtered array with float32 datatype ( done internally to avoid overflow)
-    """
-    
-    img = np.array(img, dtype='float32')
-    np.square(img, out=img)
-    uniform_filter(img, window, output=img)
-    
-    return(img)
-    
-def filter_image(file, output=None, filter='lee', **kwargs):
+def filter_image(img, output=None, filter='lee', **kwargs):
     '''
     *Parameters*
     
@@ -279,7 +216,8 @@ def filter_image(file, output=None, filter='lee', **kwargs):
     filter = {'lee': lee_filter,
               'elee':enhanced_lee_filter
               }[filter.lower()]
-    
+
+    '''
     # open dataset for writing or read-only
     if output is None:
         access = gdal.GF_Write
@@ -287,7 +225,7 @@ def filter_image(file, output=None, filter='lee', **kwargs):
         access = gdal.GF_Read
     
     img = gdal.Open(file, access)
-    
+    '''
     # read data, ensuring 3-dimensional array shape
     arr = img.ReadAsArray()
     if len(arr.shape) == 2:

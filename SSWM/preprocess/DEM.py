@@ -3,11 +3,9 @@ This file contains functions to download and mosaic DEM tiles from a
 variety of providers
 """
 
-import gdal
-import glob
+from osgeo import gdal
 import itertools
-import ogr
-import osr
+from osgeo import osr
 import os
 import re
 import tarfile
@@ -53,7 +51,7 @@ def get_tile_path_CDED(NTS):
         raise Exception("Invalid NTS sheet!")
     
     # base path for all files
-    basepath =  "http://ftp.geogratis.gc.ca/pub/nrcan_rncan/archive/elevation/old_geobase_cded_dnec"
+    basepath =  "http://ftp.geogratis.gc.ca/pub/nrcan_rncan/archive/elevation/geobase_cded_dnec"
     
     # build ftp path
     tile = NTS[0:3]
@@ -139,11 +137,11 @@ def SRTM_tile_name(lon, lat):
     
     """
     
-    EW = "W" if lon < 0 else "E"
-    NS = "S" if lat < 0 else "N"
+    EW = "w" if lon < 0 else "e"
+    NS = "s" if lat < 0 else "n"
     lon = "{:03d}".format(np.abs(lon))
     lat = "{:02d}".format(np.abs(lat))
-    name = "{}{}{}{}.SRTMGL1.hgt.zip".format(NS, lat, EW, lon)
+    name = "NASADEM_HGT_{}{}{}{}.zip".format(NS, lat, EW, lon)
  
     return(name)
     
@@ -151,7 +149,7 @@ def get_tile_path_SRTM(lon=None, lat=None, name=None):
     """
     get_tile_path_SRTM(-110, 49)
     """
-    baseurl = "http://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/"
+    baseurl = "https://e4ftl01.cr.usgs.gov/MEASURES/NASADEM_HGT.001/2000.02.11/"
     if name:
         url = baseurl + name
     else:
@@ -583,7 +581,7 @@ def NTS_tiles_from_extent(ext, scale=1):
     
     return(tile_list)
 
-def get_spatial_extent(raster_path, target_EPSG = 4326, tol=0.1):
+def get_spatial_extent(raster_path, target_EPSG = 4326, tol=0.25):
     """ Get the spatial extent of a raster file. 
     
     If the file is not georeferenced (e.g. for raw radarsat 2), this function 

@@ -3,7 +3,7 @@ For RandomForest water classification of radar images
 """
 
 import csv
-import gdal
+from osgeo import gdal
 import numpy as np
 import pandas as pd
 import logging
@@ -13,7 +13,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn import metrics
 
 from SSWM.trainingTesting.PixStats import PixStats
-from SSWM.trainingTesting.HDF5Reader import HDF5Reader
+#from SSWM.trainingTesting.HDF5Reader import HDF5Reader
 from SSWM.preprocess.preutils import write_array_like, cloneRaster
 from SSWM.utils import bandnames
 
@@ -32,7 +32,45 @@ class waterclass_RF(bandnames):
     def __init__(self, **rfargs):
         self.rf = self._make_tree(**rfargs)
         self.results = dict()
-        
+
+    def train_from_image(self, cur_file, exdir, gsw_path, valseed, nland=1000, nwater=1000, eval_frac=0.2):
+        """ Train a random forest by sampling directly from an image
+        Optionally set aside some of the sample for evaluation
+
+        **Parameters**
+
+        cur_file : str
+            path to image file
+        exdir: str
+            path to dataset directory
+        gsw_path : str
+            path to gsw files needed to create mask for training
+        valseed : int
+            seed for random sampling
+        nland : int
+            number of land pixels to sample
+        nwater : int
+            number of water pixels to sample
+        eval_frac : float
+            fraction between 0 and 1 that should be set aside for evaluation
+        """
+
+        logger.info("Beginning train from image")
+        trainingdataset = training_dataset()
+
+        trainingdataset.sample_from_image(cur_file, exdir, gsw_path, valseed, nland, nwater, eval_frac,
+                                          max_L2W_ratio=10)
+        logger.info("Creation of training data complete!")
+
+        self.training_data = trainingdataset.training_data
+        self.training_targets = trainingdataset.training_targets
+        self.testing_data = trainingdataset.testing_data
+        self.testing_targets = trainingdataset.testing_targets
+
+        del trainingdataset
+
+        self.rf.fit(self.training_data, self.training_targets)
+
     def train_from_h5(self, h5f, nland=1000, nwater=1000, eval_frac=0.2):
         """ Train a random forest using a data sample from an hdf5 file
         Optionally set aside some of the sample for evaluation
@@ -219,8 +257,59 @@ class training_dataset(bandnames):
         self.training_data    = None
         self.testing_data     = None 
         self.training_targets = None
-        self.testing_targets  = None 
-        
+        self.testing_targets  = None
+
+    def sample_from_image(self, cur_file, exdir, gsw_path, valseed, nland=1000, nwater=1000, eval_frac=0.2,
+                          max_L2W_ratio=10):
+        """
+        sample n & m pixels water and land pixels respectivally from the scene,
+        split into training and testing sets needed for RF
+
+        **Parameters**
+
+        cur_file : str
+            path to image file
+        exdir: str
+            path to dataset directory
+        gsw_path : str
+            path to gsw files needed to create mask for training
+        valseed : int
+            seed for random sampling
+        nland : int
+            number of land pixels to sample
+        nwater : int
+            number of water pixels to sample
+        eval_frac : float
+            fraction between 0 and 1 that should be set aside for evaluation
+        max_l2w_ratio : int
+            maximum allowed ratio of land pixels to water pixels in the training dataset
+        """
+        logger.info("Cur_file {}".format(cur_file))
+
+        P = PixStats(cur_file,
+                     output_dir=exdir,
+                     gsw_path=gsw_path)
+
+        for band in bandnames.DATA_BANDS:
+            if not band in P.valid_bands:
+                P.valid_bands.append(band)
+        P.available_bands = P.get_valid_bands()
+
+        water_sample, land_sample = P.get_stats_and_sample(valseed, nwater, nland, max_L2W_ratio)
+
+        # split sample into training points and test points
+        training_wat, test_wat = self.split_sample(water_sample, eval_frac)
+        training_land, test_land = self.split_sample(land_sample, eval_frac)
+
+        TRAIN = np.concatenate((training_wat, training_land), axis=0)
+        TEST = np.concatenate((test_wat, test_land), axis=0)
+
+        self.training_data = pd.DataFrame(TRAIN).drop(self.MASK_LABEL[0], axis=1)
+        self.testing_data = pd.DataFrame(TEST).drop(self.MASK_LABEL[0], axis=1)
+        self.training_targets = TRAIN[self.MASK_LABEL[0]]
+        self.testing_targets = TEST[self.MASK_LABEL[0]]
+
+
     def sample_from_h5(self, h5f, nland=1000, nwater=1000, eval_frac=0.2):
         """ Read data from an HDF5 file. 
         

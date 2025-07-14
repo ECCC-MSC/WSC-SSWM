@@ -2,7 +2,7 @@
 Postprocessing for probability images generated using random forest classification
 """
 
-import gdal
+from osgeo import gdal
 import geopandas as gp
 import logging
 import numpy as np
@@ -60,13 +60,6 @@ def postprocess(classified_img, output_poly, pythonexe, gdalpolypath, window=7):
         polys.to_file(output_poly, driver='GPKG')
     
     os.remove(tmp_polygons)
-
-def postprocess_highestimate(classified_img, output_poly, pythonexe, gdalpolypath):
-    """Polygonize regions without filtering"""
-    binary_cls = os.path.splitext(classified_img)[0] + "_classified.tif"
-    grow_regions(classified_img, binary_cls)
-    set_nodata(binary_cls, nodata=0)
-    polygonize(output_poly, binary_cls, pythonexe=pythonexe, gdalpolypath=gdalpolypath) 
     
 def threshold(input, val=50):
     """ Threshold a raster image and return the new array """
@@ -204,29 +197,6 @@ def max_filter_inplace(img_path, band=1, size=3):
     img.FlushCache()
     del img, arr
 
-    
-if __name__ == "__main__":   
-    import argparse 
-    
-    parser = argparse.ArgumentParser(description = "Filter false positives from random forest probability image.")
-    parser.add_argument('img', metavar='IMG', type=str, help="Path of image to process")
-    parser.add_argument('python', metavar='PYTH', type=str, help="Path to python executable")
-    parser.add_argument('gdal', metavar='GDAL', type=str, help="Path to gdal_polygonize")
-    parser.add_argument('-w', '--window', metavar='W', type=int, default=7, help="Window size for majority filter")
-    parser.add_argument('-i', '--include_high_estimate', action='store_true', dest='high_estimate', help="Includes high-water estimate")
-    
-    args = parser.parse_args()
-    img = args.img
-    python = args.python
-    gdalpoly = args.gdal
-    window = args.window
-    
-    outpoly = os.path.splitext(img)[0] + "_classified_filt.gpkg"
-    
-    postprocess(img, outpoly, python, gdalpoly, window=window)
-    if args.high_estimate:
-        highpoly = os.path.splitext(img)[0] + "_classified.gpkg"
-        postprocess_highestimate(img, highpoly, python, gdalpoly)
 
 
 

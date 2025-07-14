@@ -67,14 +67,10 @@ def clean_up(extracted_directory):
     archive = extracted_directory + '.tar'
     os.remove(archive)
 
-def failure(output_h5, exdir, cur_file, images_output_dir, msg):
-    """ Create a flag file to indicate that the processing was aborted."""
-    os.remove(output_h5)
+def failure(exdir):
     clean_up(exdir)
-    errfile = os.path.join(images_output_dir, cur_file + ".failed")
-    with open(errfile, 'w') as f:
-        f.writelines(msg)
     sys.exit(0)
+
             
 def forestClassifier(config):
     # Load configuration file
@@ -113,7 +109,7 @@ def forestClassifier(config):
     
     scene_id = os.path.splitext(os.path.basename(cur_file))[0]
     
-    
+    """
     # Create HDF5 for training, skip if it already exists 
     #====================================================
     output_h5 = scene_id + ".h5"
@@ -145,6 +141,9 @@ def forestClassifier(config):
         training_file = Config.get('Classification', 'train_on')
     else:
         training_file = output_h5
+    """
+
+
         
     output_basename = os.path.join(images_output_dir, scene_id)
     output_report = os.path.join(images_output_dir, scene_id + '.txt')
@@ -153,24 +152,26 @@ def forestClassifier(config):
     RF = forest.waterclass_RF(n_estimators=500, criterion='entropy', oob_score=True, n_jobs=-1)
     
     try:
-        RF.train_from_h5(training_file, nland=7500, nwater=2500, eval_frac=0.25)
-    
+        #RF.train_from_h5(training_file, nland=7500, nwater=2500, eval_frac=0.25)
+        RF.train_from_image(cur_file, exdir, gsw_path, nland=750, nwater=2500, eval_frac=0.25)
+
     except ZeroDivisionError as e:
-        logging.error("No water pixels found in scene. Skipping image.")
         msg = ("No overlapping water pixels were found in this scene."
                 "Classification for this image was not performed.")
-        failure(output_h5, exdir, images_output_dir, msg)
+        logging.error(msg)
+        failure(exdir)
  
     RF.rf.num_procs = num_procs
     RF.save_evaluation(output_report)
-    RF.test_from_h5(output_h5, nwater=625, output=test_report)
+    #RF.test_from_h5(output_h5, nwater=625, output=test_report)
     
     if RF.results['m']['F1'] < bandnames.MIN_F1:
         msg = ("Poor classification quality found during model fitting"
                 " (F1 < {}). "
                 "Classification for this image was not performed. Change F1 threshold in the "
                 "'bandnames' class (DUAP/utils.py)".format(bandnames.MIN_F1))
-        failure(output_h5, exdir, cur_file, images_output_dir, msg)
+        logging.warning(msg)
+        failure(exdir)
         
     # Classify image
     #================
@@ -184,20 +185,10 @@ def forestClassifier(config):
     gdalpolypath = Config.get('Postprocess', 'polygonize')
     output_polygon = output_basename + "_classified_filt.gpkg"
     low_estimate = output_basename + "_classified_filt.tif" # created by .postprocess()
-    high_estimate = output_basename + "_classified.tif"
-    high_poly = output_basename + "_classified.gpkg"
     
     postprocess.postprocess(output_img, output_polygon, pythonexe, gdalpolypath)
     postprocess.rasterize_inplace(low_estimate, output_polygon)
     postprocess.max_filter_inplace(low_estimate, band=1, size=3) # testing
-    
-    postprocess.postprocess_highestimate(output_img, high_poly, pythonexe, gdalpolypath)
-    
-    
-    # Prepare for FST creation by making *.npz files
-    #===============================================
-    P.prepare_from_geotif(classified_img=high_estimate, target_resolution=200, name_suffix='_perc_cov_lowres')
-    P.prepare_from_geotif(classified_img=low_estimate,  target_resolution=200, name_suffix='_perc_cov_lowres_filt')
     
     
     # Clean up

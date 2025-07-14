@@ -1,4 +1,4 @@
-import gdal 
+from osgeo import gdal
     
 def orthorectify_dem_rpc(input, output, DEM, dtype=None):
     """ Orthorectify raster using rational polynomial coefficients and a DEM

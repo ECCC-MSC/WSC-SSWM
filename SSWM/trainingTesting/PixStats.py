@@ -1,19 +1,14 @@
 import os
 import math
 import numpy as np
-import matplotlib.pyplot as plt
 import logging
 import pyproj
 
 from osgeo import osr, gdal
 from SSWM.trainingTesting.SRIDConverter import SRIDConverter
-from SSWM.trainingTesting.TrainingTestingutils import bin_ndarray
-from SSWM.trainingTesting.Hdf5Writer import Hdf5Writer
 from SSWM.trainingTesting.GSWInterpolator import GSWInterpolator
+from SSWM.utils import bandnames
 
-# Switch backend display to accomodate X-forwarding on CMC
-# https://stackoverflow.com/questions/35737116/runtimeerror-invalid-display-variable
-plt.switch_backend('agg')
 logger = logging.getLogger(__name__)
 
 class PixStats:
@@ -254,127 +249,96 @@ class PixStats:
                 
         del mask
         return dict_predict
-            
-    def get_stats(self, write_water_mask=True, write_hist=False):
-        """ Create hdf5 file and a priori water mask for radar image 
-        
+
+    def get_stats_and_sample(self, valseed, nwater, nland, max_L2W_ratio, write_water_mask=False):
+        """ Create hdf5 file and a priori water mask for radar image
+
         Creates a *.tif file corresponding to the 89-100% confidence interval for water in the
-        GSW product. Also takes any pixels with water likelihood equal to zero or greater than 89 
-        and writes them to an hdf5 file (these become the data on which the model will be trained) 
-        
+        GSW product. Also takes any pixels with water likelihood equal to zero or greater than 89
+        and writes them to an hdf5 file (these become the data on which the model will be trained)
+
         Creates histograms of water/non-water pixel values
-        
+
         """
-        f_name = f'{os.path.splitext(os.path.basename(self.f_path))[0]}.h5'
-        hdf5_path = os.path.join(self.output_dir,f_name)
-        
-        if os.path.isfile(hdf5_path):
-            logger.warning(f"File {hdf5_path} already exists and will be overwritten")
-            os.remove(hdf5_path)
-        
-        hdf_writer = Hdf5Writer(hdf5_path)
-        hdf_writer.open()
-        
+
         beam_mode = self.get_beam_mode()
         ds, src_srs, invert_xy = self.get_bands_infos()
-        coords, nb_pixels = self.get_coords_for_file(ds,invert_xy)
+        coords, nb_pixels = self.get_coords_for_file(ds, invert_xy)
         logger.info(f'Coordinates shape: {coords.shape}')
         wgs84_coords = np.zeros((coords.shape[0], 2), order='F')
-        wgs84_coords[:, 1], wgs84_coords[:,0] = SRIDConverter.convert_from_coordinates_check_geo(coords, src_srs)
+        wgs84_coords[:, 1], wgs84_coords[:, 0] = SRIDConverter.convert_from_coordinates_check_geo(coords, src_srs)
         self.coords = wgs84_coords
         min_lat, min_lon, max_lat, max_lon, water_presence = self.get_water_pixels()
-        logger.info(min_lat, min_lon, max_lat, max_lon)
-        
+
+        logger.info("min_lat {}, min_lon {}, max_lat {}, max_lon {} ".format(min_lat, min_lon, max_lat, max_lon))
+
         logger.info(f'Water Presence vector (h5): {water_presence}')
-        mask = np.array(ds.GetRasterBand(self.available_bands['Valid Data Pixels']).ReadAsArray(),dtype=bool)
-        hdf_writer.add_beam_mode(self.f_path, beam_mode)
+        mask = np.array(ds.GetRasterBand(self.available_bands['Valid Data Pixels']).ReadAsArray(), dtype=bool)
+
         water_presence = water_presence.reshape(self.grid_dims)
-        
+
         logger.info(f'MASK: {mask.shape} (shape) \n {mask}')
         logger.info(f'Water Presence: {water_presence.shape}\n {water_presence}')
 
         water_presence[~mask] = 255
-        logger.info(f'{np.sum(water_presence==1)} water pixels. {np.sum(water_presence==0)} land pixels. {np.sum(water_presence==255)} non-water')
+        logger.info(
+            f'{np.sum(water_presence == 1)} water pixels. {np.sum(water_presence == 0)} land pixels. {np.sum(water_presence == 255)} non-water')
         if write_water_mask:
             self.to_geotiff(water_presence.reshape(self.grid_dims), mask=mask)
         del mask
-        
-        water_presence_idx = water_presence==1
+
+        # water_presence_idx = water_presence==1
+
         idx_valid = water_presence != 255
-        idx_water = water_presence[idx_valid] == 1
-        coords_valid = water_presence.ravel() != 255
-        logger.info(f'Adding valid coordinates:{self.coords[coords_valid].shape}')
-        hdf_writer.add_rs2_coords(self.f_path, self.coords[coords_valid], min_lat, max_lat, min_lon, max_lon, shape=self.grid_dims)
-        logger.info(f'Water Presence: {water_presence.shape}')
-        hdf_writer.add_water(self.f_path,idx_water)
+        idx_water = np.nonzero(water_presence[idx_valid] == 1)[0]
+        idx_land = np.nonzero(water_presence[idx_valid] == 0)[0]
+
+        valid_vals = water_presence[idx_valid] == 1
+        # coords_valid = water_presence.ravel() != 255
+        # logger.info(f'Adding valid coordinates:{self.coords[coords_valid].shape}')
+        # hdf_writer.add_rs2_coords(self.f_path, self.coords[coords_valid], min_lat, max_lat, min_lon, max_lon, shape=self.grid_dims)
+        # logger.info(f'Water Presence: {water_presence.shape}')
+        # hdf_writer.add_water(self.f_path,idx_water)
         del self.coords
-        
-        data_bands = set(self.available_bands.keys()) - set(['Valid Data Pixels'])
+
+        if max_L2W_ratio:
+            nwat = len(idx_water)
+            nland = len(idx_land)
+            ratio = min(max_L2W_ratio, nland // nwat)
+            nland = min(nwater * ratio, len(idx_water))
+
+            logger.info("Num land after L2W ratio: {}".format(nland))
+
+        # take sample of water pix and land pix
+        np.random.seed(valseed);
+        wat_ix_sampl = np.random.choice(idx_water, nwater)
+        np.random.seed(valseed);
+        land_ix_sampl = np.random.choice(idx_land, nland)
+
+        data_bands = [b for b in bandnames.DATA_BANDS if b in self.available_bands]
+
+        struct = [(var, np.float32) for var in data_bands]
+        struct.append(('water_mask', bool))
+        water_sample = np.empty(shape=(nwater,), dtype=struct)
+        land_sample = np.empty(shape=(nland,), dtype=struct)
+
         for band in data_bands:
-            band_array = np.array(ds.GetRasterBand(self.available_bands[band]).ReadAsArray()[idx_valid],dtype=np.float32)
-            logger.info(f'Adding {band} values')
+            band_array = np.array(ds.GetRasterBand(self.available_bands[band]).ReadAsArray()[idx_valid],
+                                  dtype=np.float32)
+            logger.info(f'Sampling {band} values')
             logger.info(f'max:{np.max(band_array)}, min:{np.min(band_array)}')
-            if band == 'incidence_angle':
-                hdf_writer.add_incidence_angle(self.f_path, band_array)
-            elif band in self.polarization.keys():
-                hdf_writer.add_pol(self.f_path, band, band_array, self.polarization[band])
-                if write_hist:
-                    plt.figure()
-                    self.plot_histogram_data(band, band_array, idx_water, ~idx_water)
-                    plt.close()
-            else:
-                hdf_writer.add_generic(self.f_path, band, band_array)
-                if write_hist:
-                    plt.figure()
-                    self.plot_histogram_data(band, band_array, idx_water, ~idx_water)
-                    plt.close()
-            del band_array
+
+            water_sample[band][:, ] = band_array[wat_ix_sampl][:, np.newaxis][:, 0]
+            land_sample[band][:, ] = band_array[land_ix_sampl][:, np.newaxis][:, 0]
+
             logger.info('Done')
-  
-    def plot_histogram3d_data(self,ds,band='HH',water_presence=None,all_unambiguous_water=None):
-        f_name = f'{os.path.splitext(self.base_name)[0]}_histogram_{band}.png'
-        f_path = os.path.join(self.output_dir,f_name)
-        incidence_angle = ds.GetRasterBand(self.available_bands['incidence_angle']).ReadAsArray()
-        band_data = ds.GetRasterBand(self.available_bands[band]).ReadAsArray()
-        #hist, bins = np.histogram(band_data.ravel()[all_unambiguous_water], bins=2048)
-        hist, xedges, yedges = np.histogram2d(band_data.ravel()[all_unambiguous_water], incidence_angle.ravel()[all_unambiguous_water], bins=2048)
-        hist_water, xedges, yedges = np.histogram2d(band_data.ravel()[water_presence],incidence_angle.ravel()[water_presence], bins=(xedges,yedges))
-        #plt.zscale('log', nonposz='clip')
-        plt.xlim([-30,20])
-        self.plot_histogram3d(hist, xedges, yedges)
-        self.plot_histogram3d(hist_water, xedges, yedges)
-        plt.title(f"Histogram {band}")
-        plt.savefig(f_path, bbox_inches='tight')
-        
-    def plot_histogram_data(self, band='HH', band_data=None, water_presence_idx=None, no_water_idx=None):
-        f_name = f'{os.path.splitext(self.base_name)[0]}_histogram_{band}.png'
-        f_path = os.path.join(self.images_output_dir,f_name)
-        logger.info(f'plotting {band} data with shape {band_data.shape}')
-        
-        hist, bins = np.histogram(band_data[no_water_idx], bins=2048)
-        hist_water, bins = np.histogram(band_data[water_presence_idx], bins=bins)
-        plt.yscale('log', nonposy='clip')
-        #plt.xlim([-30,20])
-        self.plot_histogram(hist, bins, color=(1.0, 0.0, 0.0, 0.5))
-        self.plot_histogram(hist_water, bins, color=(0.0, 0.0, 1.0, 0.5))
-        plt.title(f"Histogram {band}")
-        plt.savefig(f_path, bbox_inches='tight')
-        
-    def plot_histogram(self, hist, bins, **kwargs):
-        logger.info(hist)
-        logger.info(bins)
-        width = np.diff(bins)
-        plt.bar(bins[:-1], hist, width=width, **kwargs)
-    
-    def plot_histogram3d(self,hist,xedges,yedges):
-        xpos, ypos = np.meshgrid(xedges[:-1] + 0.25, yedges[:-1] + 0.25)
-        xpos = xpos.flatten('F')
-        ypos = ypos.flatten('F')
-        zpos = np.zeros_like(xpos)
-        dx = 0.5 * np.ones_like(zpos)
-        dy = dx.copy()
-        dz = hist.flatten()
-        plt.bar3d(xpos, ypos, zpos, dx, dy, dz)
+
+            del band_array
+
+        water_sample['water_mask'][:, ] = valid_vals[wat_ix_sampl][:, np.newaxis][:, 0]
+        land_sample['water_mask'][:, ] = valid_vals[land_ix_sampl][:, np.newaxis][:, 0]
+
+        return water_sample, land_sample
 
     def get_coords_for_file(self,ds,invert_xy=False):
         logger.info('Get coords for file called')
@@ -402,20 +366,9 @@ class PixStats:
         #coords = np.hstack((xs.ravel()[:, np.newaxis], ys.ravel()[:, np.newaxis]))
         
         return coords, nb_pixels
-    
-    def get_band_histogram(self,band_number,bins=2048,name=None):
-        plt.figure(figsize=(1024, 768))
-        b_name = f'{os.path.splitext(self.base_name)[0]}_histogram_{name}.png'
-        band_data = ds.GetRasterBand(band_number).ReadAsArray()
-        plt.hist(band_data, bins='auto')  # arguments are passed to np.histogram
-        plt.title("Histogram")
-        plt.savefig(os.path.join(self.output_dir, b_name), bbox_inches='tight')
         
     def get_water_pixels(self):
         interpolator = GSWInterpolator(sat_f_name=self.f_path, gsw_dir=self.gsw_path, output_dir=self.output_dir)
         min_lat, min_lon, max_lat, max_lon = self.get_bbox_coords(self.coords)
         logger.info("Bounding box: lat ({}, {}), lon({},{})".format(min_lat, max_lat, min_lon, max_lon))
         return min_lat, min_lon, max_lat, max_lon, interpolator.get_water_presence_for_points(min_lat,max_lat,min_lon,max_lon,self.coords)
-    
-    def make_training_samples(self):
-        pass
