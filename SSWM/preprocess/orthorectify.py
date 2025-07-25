@@ -1,4 +1,5 @@
 from osgeo import gdal
+import os
     
 def orthorectify_dem_rpc(input, output, DEM, dtype=None):
     """ Orthorectify raster using rational polynomial coefficients and a DEM
@@ -35,5 +36,28 @@ def orthorectify_dem_rpc(input, output, DEM, dtype=None):
     gdal.Warp(output, input, options=optns)
     
     return(True)
+
+
+def orthorectify_otb(input, output, DEMFolder, gridspacingx):
+    """ Orthorectify raster using orfeotoolbox Ortho
+
+    Parameters
+    ----------
+    input : str
+        Path to image to orthorectify
+    output : str
+        Path to output image
+    DEM : str
+        Path to DEM
+    gridspacing : float
+        pixel size of deformation grid used for the ortho
+
+    Returns
+    -------
+    """
+    command = '''otbcli_OrthoRectification -io.in {} -io.out {} -map wgs -elev.dem {} -interpolator linear -opt.ram 2000 -opt.gridspacing {}'''.format(
+        str(input), str(output), str(DEMFolder), str(gridspacingx))
+    ok = os.system(command)
+    print("Command result: {}".format(ok))
     
 

@@ -6,8 +6,8 @@ import pyproj
 
 from osgeo import osr, gdal
 from SSWM.trainingTesting.SRIDConverter import SRIDConverter
+from SSWM.trainingTesting.TrainingTestingutils import bin_ndarray, bandnames
 from SSWM.trainingTesting.GSWInterpolator import GSWInterpolator
-from SSWM.utils import bandnames
 
 logger = logging.getLogger(__name__)
 
@@ -29,46 +29,10 @@ class PixStats:
             File path with location to save the files in FST format
     
     """
-    # <ID>, <(min,max) incidence angle>
-    beam_modes = {'S1':(100,(19,53)),
-                 'S2':(102,(19,53)),
-                 'S3':(104,(19,53)),
-                 'S4':(106,(19,53)),
-                 'S5':(108,(19,53)),
-                 'S6':(110,(19,53)),
-                 'S7':(112,(19,53)),
-                 'W1':(200,(19,45)),
-                 'W2':(202,(19,45)),
-                 'W3':(204,(19,45)),
-                 'W4':(206,(19,45)),
-                 'F0W1':(208,(19,45)),
-                 'F0W2':(210,(19,45)),
-                 'F0W3':(212,(19,45)) } 
-    
-    # These RCM incidence angles and codes are made up right now 
-    RCM_modes = {'FSL'   :(1, (19,53)),
-                 '3M'    :(2, (19,53)),
-                 '5M'    :(3, (19,53)),
-                 '16M'   :(4, (19,53)),
-                 'SC30M' :(5, (19,53)),
-                 'SC50M' :(6, (19,53)),
-                 'SC100M':(7, (19,53)),
-                 'SCLN'  :(8, (19,53)),
-                 'SCSD'  :(9, (19,53)),
-                 'QP'    :(10, (19,53))}
-    
-    polarization = {'HH': np.array([1,0,0,0]),
-                    'VV': np.array([0,1,0,0]),
-                    'HV': np.array([0,0,1,0]),
-                    'VH': np.array([0,0,0,1])
-                    }
     
     available_bands = None
                          
-    valid_bands=[ 'incidence_angle', 'HH', 'HV', 'VV', 'VH',
-                  'Valid Data Pixels', 'Unfiltered Seeds',
-                  'Unfilt.Ext from energy HV',  'Final HV+TexEn Ext Mask BLO',
-                  'Filtered Seeds', 'Filtered Extended']
+    valid_bands=bandnames.DATA_BANDS + bandnames.VALID_PIX_BAND
     
     def __init__(self,f_path,output_dir=None,gsw_path=None,images_output_dir=None,fst_converter_path=None):
         self.f_path=f_path
@@ -158,110 +122,12 @@ class PixStats:
         output_file.FlushCache()
         output_file=None
         logger.info(f'Geotiff created successfully at {f_path}')
-    
-    def get_beam_mode(self):
-        base_name= os.path.basename(self.f_path)
-        beam_mode_str = base_name.split('_')[1]
-        one_hot_beam_mode = np.array([0 if b != beam_mode_str else 1 for b in self.beam_modes])
-        return one_hot_beam_mode
-    
-    def prepare_from_geotif(self, classified_img, convert_probabilities=False, **kwargs):
-        """ Equivalent to prepare_fst_info but used when pol_fst_array doesn't exist
-        
-        *Parameters*
-        
-        classified_img : str
-            path to gdal-supported raster 
-        """
-        logger.info(f"Preparing npz from {classified_img}")
-        ds, src_srs, invert_xy = self.get_bands_infos()
-
-        # get valid pix
-        val_pix_band = self.available_bands['Valid Data Pixels']
-        valid_pix = np.array(ds.GetRasterBand(val_pix_band).ReadAsArray(), dtype=bool)
-        ds=None
-        
-        # get classification
-        cls = gdal.Open(classified_img)
-        clsarray = cls.GetRasterBand(1).ReadAsArray()
-        if convert_probabilities:
-            clsarray[clsarray <= 50] = 0
-            clsarray[clsarray > 50] = 1
-        cls=None
-        
-        # select only valid class pixels and flatten
-        classified_1d = clsarray.ravel()[valid_pix.ravel()]
-                
-        
-    def prepare_predict(self):
-        beam_mode = self.get_beam_mode()
-        ds, src_srs, invert_xy = self.get_bands_infos()
-        coords, nb_pixels = self.get_coords_for_file(ds, invert_xy)
-        wgs84_coords = np.zeros((coords.shape[0], 2), order='F')
-        wgs84_coords[:, 1], wgs84_coords[:, 0] = SRIDConverter.convert_from_coordinates_check_geo(coords, src_srs)
-        self.coords = wgs84_coords
-        min_lat, min_lon, max_lat, max_lon, water_presence = self.get_water_pixels()
-        mask = np.array(ds.GetRasterBand(self.available_bands['Valid Data Pixels']).ReadAsArray(),dtype=bool)
-        
-        #hdf_writer.add_beam_mode(self.f_path,beam_mode)
-        water_presence=water_presence.reshape(self.grid_dims)
-        
-        # Set as ambiguous pixels (anything that is >0 and <90
-        water_presence[water_presence==255]=2
-        
-        # Mask invalid pixels
-        water_presence[~mask]=255
-        
-        # A priori water presence
-        self.to_geotiff(water_presence.reshape(self.grid_dims), mask=mask)
-        del mask
-            
-    def get_predict_data(self, index=0, num_procs=8, polarization='HH', water_weight=1.0):
-        """
-        Put image data into a dictionary that can be fed as features into an tf.estimator.inputs.numpy_input_fn object
-            
-        *Returns*
-        
-        A dictionary whose keys correspond to the names of image bands 
-        """
-        beam_mode = self.get_beam_mode()
-        ds, src_srs, invert_xy = self.get_bands_infos()
-        mask = np.array(ds.GetRasterBand(self.available_bands['Valid Data Pixels']).ReadAsArray(),dtype=bool)
-        shape = mask.shape
-        nb_pixels=mask[mask].size
-        nb_pixels_per_task = math.ceil(nb_pixels/num_procs)
-        start = index * nb_pixels_per_task
-        end = start + nb_pixels_per_task
-        dict_predict={}
-        
-        for band in set(['incidence_angle', polarization]).intersection(set(self.available_bands)):
-            band_array = np.array(ds.GetRasterBand(self.available_bands[band]).ReadAsArray()[mask].ravel()[start:end],dtype=np.float32)
-            dict_predict['beam_mode'] = np.tile(beam_mode,(band_array.shape[0],1))
-            dict_predict['weight'] = np.tile(water_weight,(band_array.shape[0],))
-            
-            if band in self.polarization.keys():
-                pol = np.tile(self.polarization[band], (band_array.shape[0],1))
-                dict_predict['polarization'] = pol
-                dict_predict['value'] = band_array
-            
-            else:
-                dict_predict[band] = band_array
-                
-        del mask
-        return dict_predict
 
     def get_stats_and_sample(self, valseed, nwater, nland, max_L2W_ratio, write_water_mask=False):
-        """ Create hdf5 file and a priori water mask for radar image
-
-        Creates a *.tif file corresponding to the 89-100% confidence interval for water in the
-        GSW product. Also takes any pixels with water likelihood equal to zero or greater than 89
-        and writes them to an hdf5 file (these become the data on which the model will be trained)
-
-        Creates histograms of water/non-water pixel values
+        """ Sample an image, we no longer use H5 files
 
         """
 
-        beam_mode = self.get_beam_mode()
         ds, src_srs, invert_xy = self.get_bands_infos()
         coords, nb_pixels = self.get_coords_for_file(ds, invert_xy)
         logger.info(f'Coordinates shape: {coords.shape}')
@@ -304,10 +170,15 @@ class PixStats:
         if max_L2W_ratio:
             nwat = len(idx_water)
             nland = len(idx_land)
-            ratio = min(max_L2W_ratio, nland // nwat)
-            nland = min(nwater * ratio, len(idx_water))
+            nwater = min(nwater, int(nwat * 0.33))
+            # ratio = min(max_L2W_ratio, nland // nwat)
+            # nland = min(nwater * ratio, len(idx_water))
+
+            ratio = max(nwat / nland, 0.05)
+            nland = int((nwater / ratio)) - nwater
 
             logger.info("Num land after L2W ratio: {}".format(nland))
+            logger.info("Num water: {}".format(nwater))
 
         # take sample of water pix and land pix
         np.random.seed(valseed);
@@ -325,6 +196,11 @@ class PixStats:
         for band in data_bands:
             band_array = np.array(ds.GetRasterBand(self.available_bands[band]).ReadAsArray()[idx_valid],
                                   dtype=np.float32)
+            # TEMP fix to NAN issue!!!!!
+            ######################
+            np.nan_to_num(band_array, copy=False, posinf=0, neginf=0)
+            ######################
+
             logger.info(f'Sampling {band} values')
             logger.info(f'max:{np.max(band_array)}, min:{np.min(band_array)}')
 
@@ -372,3 +248,4 @@ class PixStats:
         min_lat, min_lon, max_lat, max_lon = self.get_bbox_coords(self.coords)
         logger.info("Bounding box: lat ({}, {}), lon({},{})".format(min_lat, max_lat, min_lon, max_lon))
         return min_lat, min_lon, max_lat, max_lon, interpolator.get_water_presence_for_points(min_lat,max_lat,min_lon,max_lon,self.coords)
+

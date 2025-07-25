@@ -20,7 +20,7 @@ import SSWM.preprocess.preutils as du
 
 logging = logging.getLogger(__name__)
 
-def postprocess(classified_img, output_poly, pythonexe, gdalpolypath, window=7):
+def postprocess(classified_img, output_poly, pythonexe, gdalpolypath, extrasTXT, window=7):
     """ Postprocess a classified probability image to remove false positives
 
     using a techinque inspired by Bolanos et al. (2013)
@@ -34,27 +34,71 @@ def postprocess(classified_img, output_poly, pythonexe, gdalpolypath, window=7):
     pythonexe : str
         path to python executable
     gdalpolypath : str
-        path to gdal_polygonize.py file 
+        path to gdal_polygonize.py file
+    extrasTXT : str
+        path containing RF model quality metrics
+    window : int
+        window size to use for filtering (Default 7)
     """
     
     binary_cls = os.path.splitext(classified_img)[0] + "_classified_filt.tif"
     tmp_polygons = os.path.splitext(classified_img)[0] + "_tmppoly.gpkg"
  
     modefilter(classified_img, output=binary_cls, window=window)
-    max_filter_inplace(binary_cls, band=1, size=3) # testing
+    #max_filter_inplace(binary_cls, band=1, size=3) # testing
 
     set_nodata(binary_cls, nodata=0)
     polygonize(tmp_polygons, binary_cls, pythonexe=pythonexe, gdalpolypath = gdalpolypath) 
     print("Calculating zonal statistics")
-    stats = pd.DataFrame(zonal_stats(tmp_polygons, classified_img, stats="mean max") )
-    
+    #stats = pd.DataFrame(zonal_stats(tmp_polygons, classified_img, stats="mean max") )
+
+    stats = pd.DataFrame(gp.read_file(tmp_polygons))
+
+    # Read performace metrics from txt
+    openExtras = open(extrasTXT, 'r')
+    name = os.path.splitext(os.path.basename(binary_cls))[0]
+    components = name.split('_')
+    datetimestr = str(components[5] + components[6])
+
+    logging.info(name)
+    logging.info(datetimestr)
+
+    names = pd.Series([str(name)] * len(stats), dtype='object')
+    stats['SceneID'] = names
+    dates = pd.Series([datetimestr] * len(stats), dtype='object')
+    stats['Date'] = dates
+
+    count = 0
+    extras = []
+    for line in openExtras:
+        if count > 7:
+            break
+
+        val = line.split('=')[1]
+        val = val.strip()
+        extras.append(val)
+
+    openExtras = None
+
+    TN = np.array([extras[0]] * len(stats), dtype='int64')
+    stats['TrueNegative'] = TN
+    FN = np.array([extras[1]] * len(stats), dtype='int64')
+    stats['FalseNegative'] = FN
+    FP = np.array([extras[2]] * len(stats), dtype='int64')
+    stats['FalsePositive'] = FP
+    TP = np.array([extras[3]] * len(stats), dtype='int64')
+    stats['TruePositive'] = TP
+    PREC = np.array([extras[5]] * len(stats), dtype='float64')
+    stats['Precision'] = PREC
+    REC = np.array([extras[7]] * len(stats), dtype='float64')
+    stats['Recal'] = REC
+    F1 = np.array([extras[6]] * len(stats), dtype='float64')
+    stats['F1'] = F1
+
     #  Add attributes and filter
     polys = gp.read_file(tmp_polygons)
     for col in stats:
         polys[col] = stats[col]
-   
-    #polys = polys[(polys['max']==100) & (polys['mean']>= 80)]
-    polys = polys[(polys['max']==100)]
     
     if len(polys):
         polys.to_file(output_poly, driver='GPKG')
@@ -173,7 +217,8 @@ def polygonize(output, rast,  pythonexe="python",
     
     if os.path.isfile(output):
         os.remove(output)
-    result = subprocess.call([pythonexe, gdalpolypath, rast, output, "-f", fmt], shell=shell)
+    command = "{} {} {} {} -f {}".format(pythonexe, gdalpolypath, rast, output, fmt)
+    result = os.system(command)
     if result != 0:
         raise RuntimeError("Error during subprocess call to GDAL polygonize")
     
@@ -196,6 +241,27 @@ def max_filter_inplace(img_path, band=1, size=3):
     
     img.FlushCache()
     del img, arr
+
+    
+if __name__ == "__main__":   
+    import argparse 
+    
+    parser = argparse.ArgumentParser(description = "Filter false positives from random forest probability image.")
+    parser.add_argument('img', metavar='IMG', type=str, help="Path of image to process")
+    parser.add_argument('python', metavar='PYTH', type=str, help="Path to python executable")
+    parser.add_argument('gdal', metavar='GDAL', type=str, help="Path to gdal_polygonize")
+    parser.add_argument('-w', '--window', metavar='W', type=int, default=7, help="Window size for majority filter")
+    parser.add_argument('-i', '--include_high_estimate', action='store_true', dest='high_estimate', help="Includes high-water estimate")
+    
+    args = parser.parse_args()
+    img = args.img
+    python = args.python
+    gdalpoly = args.gdal
+    window = args.window
+    
+    outpoly = os.path.splitext(img)[0] + "_classified_filt.gpkg"
+    
+    postprocess(img, outpoly, python, gdalpoly, window=window)
 
 
 
