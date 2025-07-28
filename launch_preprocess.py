@@ -107,10 +107,11 @@ def preprocess(cur_file, folder, DEM_directory, finished_result, DEMType, logger
         clean = lambda *args: None
     
     # move zipfiles and clean up
-    print(zip_out)
     shutil.move(zip_out, os.path.join(finished_result, os.path.basename(zip_out)))
     shutil.rmtree(cur_file)
     clean()
+
+    return os.path.join(finished_result, os.path.basename(zip_out))
 
 
 def preParamConfig(config, cur_file):
@@ -132,4 +133,6 @@ def preParamConfig(config, cur_file):
     logging.getLogger().addHandler(logging.StreamHandler())
     logger = logging.getLogger()
 
-    preprocess(cur_file, folder, DEM_dir, finished_result, DEMType, logger,  satellite=sat)
+    zip_out = preprocess(cur_file, folder, DEM_dir, finished_result, DEMType, logger,  satellite=sat)
+
+    return zip_out

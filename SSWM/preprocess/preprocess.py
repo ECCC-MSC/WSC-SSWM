@@ -19,8 +19,8 @@ import zipfile
 
 from os import path
 
-from SSWM.preprocess.orthorectify import orthorectify_dem_rpc
-from SSWM.preprocess.preutils import reproject_image_to_master, createvalidpixrast, RS2, ProcessSLC, incidence_angle_from_xml, cloneRaster, RS2, calibrate_in_place
+from SSWM.preprocess.orthorectify import orthorectify_dem_rpc, orthorectify_otb
+from SSWM.preprocess.preutils import reproject_image_to_master, createvalidpixrast, RS2, ProcessSLC, incidence_angle_from_xml, cloneRaster, RS2, calibrate_in_place, calibrateS1
 from SSWM.preprocess.filters import lee_filter2
 import SSWM.preprocess.DEM as de
 from SSWM.utils import bandnames
@@ -286,9 +286,13 @@ def preproRCM_bd(folder, DEM_dir, cleanup=True, product="CDED", filter=True):
             
     # load image
     img = gdal.Open(tif, gdal.GA_ReadOnly)
+    pol = [img.GetRasterBand(i + 1).GetDescription() for i in range(img.RasterCount)]
     
     # get image extent (xmin, xmax, ymin, ymax) check for existence of kml
     extent = de.get_spatial_extent(tif)
+
+    if extent['ymax'] > 58:
+        product = 'CDED'
 
     # build dem
     de.create_DEM_mosaic_from_extent(extent, dstfile=TMP_DEM, 
@@ -351,10 +355,17 @@ def preproRCM_bd(folder, DEM_dir, cleanup=True, product="CDED", filter=True):
     orth.write(OUT_FINAL)
     
     print("{:#^84}".format('  VRT  Complete '))
-    
+
     ## LABEL BANDS
-    #=============================
+    # =============================
     print("{:#^84}".format('  Assign band metadata  '))
+
+    img = gdal.Open(OUT_FINAL, gdal.GA_Update)
+    # for (i, description) in enumerate(pol + ['Valid Data Pixels', 'Slope', 'TPI']):
+    for (i, description) in enumerate(pol + ['Valid Data Pixels']):
+        img.GetRasterBand(i + 1).SetDescription(description)
+    del img
+    print("{:#^84}".format('   Band metadata complete  '))
 
     ## ZIP
     #==============================
@@ -386,11 +397,11 @@ def preproRCM_bd(folder, DEM_dir, cleanup=True, product="CDED", filter=True):
     return(zip_out)
 
 def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
-    """ Preprocess Radarsat-2 file in preparation for classification
+    """ Preprocess Sentinel-1 file in preparation for classification
 
     *Parameters*
 
-    product_xml : str
+    folder : str
         Path to data folder
     DEM_dir : str
         Path to directory containing DEM files in appropriate folder hierarchy
@@ -408,16 +419,22 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     #wd = path.dirname(folder)
     manifest = os.path.join(folder, 'manifest.safe')
 
-    OUT_ENERGY = path.join(folder, "OUT_ENERGY.tif")
+    os.environ['OTB_MAX_RAM_HINT'] = '2000'
+
     TMP_DEM = path.join(folder, "TMP_DEM.tif")
     OUT_ORTHO = path.join(folder, "OUT_ORTHO.tif")
     OUT_VALID = path.join(folder, "OUT_VALID.tif")
     OUT_TMP = path.join(folder, "OUT_TMP.tif")
+    DEM_FOLDER = path.join(folder, "DEM_FOLDER")
 
     OUT_FINAL = path.join(folder, path.basename(folder) + ".vrt")
 
     merge_files = []
     imagery_files = [f.strip() for f in re.findall(".*tiff", gdal.Info(manifest))]
+
+    img = gdal.Open(manifest, gdal.GA_ReadOnly)
+    pol = [img.GetRasterBand(i + 1).GetDescription() for i in range(img.RasterCount)]
+    del img
 
     ## CHECK FOR COMPLEX VALUES
     # =================
@@ -428,23 +445,26 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     ## CALIBRATE & FILTER IMAGERY
     # =================
 
-    img = gdal.Open(manifest)
-    pol = [img.GetRasterBand(i+1).GetMetadata_Dict()['POLARISATION'] for i in range(img.RasterCount)]
-    # filterbands = [i for i in range(img.RasterCount) if img.GetRasterBand(i+1).GetDescription() in bandnames.DETECTED_BANDS]
-    if img.RasterCount == 1:
+    for i, datafile in enumerate(imagery_files):
+        print(f"Calibrating Band {i+1}")
+        calibrateS1(datafile)
+
+        img = gdal.Open(datafile, gdal.GA_Update)
+
         amp2e4 = np.moveaxis(np.atleast_3d(img.ReadAsArray()), 2, 0)[:, :, :]
-    else:
-        amp2e4 = img.ReadAsArray()[:, :, :]
 
-    for band_i in range(0, img.RasterCount):
-        print("band: {}".format(band_i + 1))
+        print(f"Filtering Band {i+1}")
         # create filtered data and write to file
-        filtered = lee_filter2(amp2e4[band_i, :, :], window=(3, 3))
+        filtered = lee_filter2(amp2e4[0, :, :], window=(3, 3))
         # amp2e4[:] = np.sqrt(filtered) * 2e4
-        img.GetRasterBand(band_i + 1).WriteArray(filtered[:, :])
+        img.GetRasterBand(1).WriteArray(filtered[:, :])
 
-    del img
+        del img
     # == end PSPOLFIL
+
+    command = f'otbcli_ConcatenateImages -il {" ".join(imagery_files)} -out {OUT_TMP}'
+    print(command)
+    os.system(command)
 
     print("{:#^84}".format('  Calibration and Filtering Complete  '))
 
@@ -452,17 +472,14 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     # ===============================
     print("{:#^84}".format('  Begin Orthorectification  '))
 
-    gdal.Warp(OUT_ORTHO, manifest, dstSRS='EPSG:4326')
 
-    img = gdal.Open(OUT_ORTHO, gdal.GA_ReadOnly)
-    for band in range(1, img.RasterCount + 1):
-        img.GetRasterBand(band).SetDescription(img.GetRasterBand(band).GetMetadata_Dict()['POLARISATION'])
-
-    del img
-
-    '''
     # get image extent (xmin, xmax, ymin, ymax) check for existence of kml
     extent = de.get_spatial_extent(manifest)
+
+    print("spatial extent of the images " + str(extent['xmax']))
+
+    if extent['ymax'] > 58:
+        product = 'CDED'
 
     # build dem
     de.create_DEM_mosaic_from_extent(extent, dstfile=TMP_DEM,
@@ -473,8 +490,26 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     os.remove(TMP_DEM)
     os.rename(tmpReproj, TMP_DEM)
 
-    orthorectify_dem_rpc(img, OUT_ORTHO, DEM=TMP_DEM)
-    '''
+    gdal.Warp(OUT_ORTHO, manifest, dstSRS='EPSG:4326')
+
+    gr = gdal.Open(OUT_ORTHO)  # Grap output pixel spacing, will be gridspacing for ortho
+    gt = gr.GetGeoTransform()
+    gsx = gt[1]
+    gsy = gt[5]
+
+    del (gr)
+    os.remove(OUT_ORTHO)
+
+    print(gsx)
+
+    os.makedirs(DEM_FOLDER)
+    shutil.move(TMP_DEM, DEM_FOLDER)
+
+    """
+    TODO: Depreciated! 
+    """
+    orthorectify_otb(OUT_TMP, OUT_ORTHO, DEM_FOLDER, gsx)
+
 
     merge_files.append(OUT_ORTHO)
     #del (img)
@@ -524,22 +559,6 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     root[j].remove(root[j][0])
     j += 1
 
-    ## build vrt for energy
-    # build vrt
-    energy_vrt = re.sub("tiff?$", "vrt", OUT_ENERGY)
-    gdal.BuildVRT(energy_vrt, OUT_ENERGY)
-
-    # read XML
-    eng = ET.parse(energy_vrt)
-    engbands = eng.findall("VRTRasterBand")
-
-    # insert and modify
-    for (i, x) in enumerate(engbands):
-        root.insert(j, x)
-        root[j].attrib['band'] = str(j - 1)
-        if i == 0:
-            root[j].remove(root[j][0])
-        j += 1
 
     # write
     orth.write(OUT_FINAL)
@@ -552,8 +571,7 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
 
     img = gdal.Open(OUT_FINAL, gdal.GA_Update)
     # for (i, description) in enumerate(pol + ['Valid Data Pixels', 'Slope', 'TPI']):
-    enpol = ['energy_' + p for p in pol]
-    for (i, description) in enumerate(pol + ['Valid Data Pixels'] + enpol):
+    for (i, description) in enumerate(pol + ['Valid Data Pixels']):
         img.GetRasterBand(i + 1).SetDescription(description)
     del img
     print("{:#^84}".format('   Band metadata complete  '))
@@ -576,7 +594,7 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
         print("{:#^84}".format('  Begin File cleanup  '))
 
         for file in [TMP_DEM, OUT_ORTHO, OUT_VALID,
-                     valid_vrt, ortho_vrt, energy_vrt, OUT_FINAL]:
+                     valid_vrt, ortho_vrt, OUT_FINAL]:
             if os.path.isfile(file):
                 os.remove(file)
 

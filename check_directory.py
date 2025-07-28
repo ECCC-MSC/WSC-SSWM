@@ -14,7 +14,7 @@ if __name__ == "__main__":
     Config = configparser.ConfigParser()
     ##User input##
     # Get keywords from an INI file
-    config = 'C:\\Users\\FitzpatrickC\\Documents\\Development\\WSC-SSWM\\SSWM\\classify.ini' #Full path to classify.ini
+    config = '' #Full path to classify.ini
     task = ''  #Either LaunchPreprocessor or LaunchClassifier as string
     ##User Input End##
 
@@ -28,5 +28,6 @@ if __name__ == "__main__":
         result = preParamConfig(config, os.path.join(folder, product))
 
         #Then, classify
-        forestClassifier(config)
+        #forestClassifier(config, os.path.join(folder, product))
+        #forestClassifier(config, result)
 

@@ -581,7 +581,7 @@ def NTS_tiles_from_extent(ext, scale=1):
     
     return(tile_list)
 
-def get_spatial_extent(raster_path, target_EPSG = 4326, tol=0.25):
+def get_spatial_extent(raster_path, target_EPSG = 4326, tol=0.5):
     """ Get the spatial extent of a raster file. 
     
     If the file is not georeferenced (e.g. for raw radarsat 2), this function 

@@ -180,7 +180,15 @@ class PixStats:
             logger.info("Num land after L2W ratio: {}".format(nland))
             logger.info("Num water: {}".format(nwater))
 
-        # take sample of water pix and land pix
+        if max_L2W_ratio:
+            nwat = len(idx_water)
+            nland = len(idx_land)
+            ratio = min(max_L2W_ratio, nland // nwat)
+            nland = min(nwater * ratio, len(idx_water))
+
+            logger.info("Num land after L2W ratio: {}".format(nland))
+
+            # take sample of water pix and land pix
         np.random.seed(valseed);
         wat_ix_sampl = np.random.choice(idx_water, nwater)
         np.random.seed(valseed);
@@ -196,11 +204,6 @@ class PixStats:
         for band in data_bands:
             band_array = np.array(ds.GetRasterBand(self.available_bands[band]).ReadAsArray()[idx_valid],
                                   dtype=np.float32)
-            # TEMP fix to NAN issue!!!!!
-            ######################
-            np.nan_to_num(band_array, copy=False, posinf=0, neginf=0)
-            ######################
-
             logger.info(f'Sampling {band} values')
             logger.info(f'max:{np.max(band_array)}, min:{np.min(band_array)}')
 
@@ -215,6 +218,7 @@ class PixStats:
         land_sample['water_mask'][:, ] = valid_vals[land_ix_sampl][:, np.newaxis][:, 0]
 
         return water_sample, land_sample
+
 
     def get_coords_for_file(self,ds,invert_xy=False):
         logger.info('Get coords for file called')
@@ -240,7 +244,7 @@ class PixStats:
         coords[:,1] = ys.ravel()
         del x, y, xs, ys
         #coords = np.hstack((xs.ravel()[:, np.newaxis], ys.ravel()[:, np.newaxis]))
-        
+
         return coords, nb_pixels
         
     def get_water_pixels(self):

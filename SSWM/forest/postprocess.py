@@ -1,9 +1,11 @@
 """
 Postprocessing for probability images generated using random forest classification
 """
-
-from osgeo import gdal
+from PIL.features import features
+from osgeo import gdal, osr
 import geopandas as gp
+import rasterio
+from rasterio import features
 import logging
 import numpy as np
 import os
@@ -20,7 +22,7 @@ import SSWM.preprocess.preutils as du
 
 logging = logging.getLogger(__name__)
 
-def postprocess(classified_img, output_poly, pythonexe, gdalpolypath, extrasTXT, window=7):
+def postprocess(classified_img, output_poly, extrasTXT, window=7):
     """ Postprocess a classified probability image to remove false positives
 
     using a techinque inspired by Bolanos et al. (2013)
@@ -48,7 +50,14 @@ def postprocess(classified_img, output_poly, pythonexe, gdalpolypath, extrasTXT,
     #max_filter_inplace(binary_cls, band=1, size=3) # testing
 
     set_nodata(binary_cls, nodata=0)
-    polygonize(tmp_polygons, binary_cls, pythonexe=pythonexe, gdalpolypath = gdalpolypath) 
+    #polygonize(tmp_polygons, binary_cls, pythonexe=pythonexe, gdalpolypath = gdalpolypath)
+
+    with rasterio.open(binary_cls) as srcfile:
+        ds_features = features.dataset_features(srcfile, bidx=1)
+        gdf = gp.GeoDataFrame.from_features(ds_features, crs=srcfile.crs)
+
+    gdf.to_file(tmp_polygons)
+
     print("Calculating zonal statistics")
     #stats = pd.DataFrame(zonal_stats(tmp_polygons, classified_img, stats="mean max") )
 
@@ -71,12 +80,15 @@ def postprocess(classified_img, output_poly, pythonexe, gdalpolypath, extrasTXT,
     count = 0
     extras = []
     for line in openExtras:
+        if line.strip() == '': continue
         if count > 7:
             break
 
+        print(line)
         val = line.split('=')[1]
         val = val.strip()
         extras.append(val)
+        count += 1
 
     openExtras = None
 
@@ -123,7 +135,7 @@ def modefilter(input, output, window=7):
 
     # Write 
     out50 = np.empty_like(p50)
-    modal(p50,  selem=np.ones((window,window)), out=out50)
+    modal(p50,  np.ones((window,window)), out50)
     p50 = None
     du.write_array_like(input, output, out50, dtype=2)
 
@@ -134,7 +146,7 @@ def grow_regions(input, output, window=3, val=50):
     
     # Write 
     out50 = np.empty_like(p50)
-    modal(p50,  selem=np.ones((window,window)), out=out50)
+    modal(p50,  np.ones((window,window)), out50)
     p50 = None
     maximum_filter(out50,  size=window, output=out50)
     du.write_array_like(input, output, out50, dtype=2)
@@ -182,48 +194,7 @@ def rasterize_inplace(rast, inshape, prefill=0):
     rst = gdal.Open(rast, gdal.GA_Update)
     gdal.Rasterize(rst, inshape, burnValues=[1])
     
-    del rst 
-  
-def polygonize(output, rast,  pythonexe="python",
-                            gdalpolypath = "/usr/bin/gdal", fmt="GPKG", shell=False):
-    """ Convert raster to polygons
-    
-    The input raster should be equal to 1 wherever a polygon is desired and 
-    zero elsewhere. The raster nodata value should also be set to zero for
-    maximum performance 
-    
-    *Parameters*
-    
-    output : str
-        path to output polygon file with file extension
-    rast : str
-        path to raster file that will be polygonized
-    pythonexe : str
-        path to python executable
-    gdalpolypath : str
-        path to gdal_polygonize.py file 
-    fmt : str
-        GDAL-compatible format for output polygons
-    shell : boolean
-        Passed to subprocess. Experimental.
-    
-    *Returns*
-    
-    int
-        return code for the subprocess.call function
-    """
-    
-    print("Converting raster to polygons")
-    
-    if os.path.isfile(output):
-        os.remove(output)
-    command = "{} {} {} {} -f {}".format(pythonexe, gdalpolypath, rast, output, fmt)
-    result = os.system(command)
-    if result != 0:
-        raise RuntimeError("Error during subprocess call to GDAL polygonize")
-    
-    return(result)                        
-         
+    del rst
 
 def raststats(inshape, raster):
     """ calculate mean and max value of a raster in each polygon """

@@ -1,5 +1,6 @@
 from osgeo import gdal
 import os
+import subprocess
     
 def orthorectify_dem_rpc(input, output, DEM, dtype=None):
     """ Orthorectify raster using rational polynomial coefficients and a DEM
@@ -55,9 +56,25 @@ def orthorectify_otb(input, output, DEMFolder, gridspacingx):
     Returns
     -------
     """
+
     command = '''otbcli_OrthoRectification -io.in {} -io.out {} -map wgs -elev.dem {} -interpolator linear -opt.ram 2000 -opt.gridspacing {}'''.format(
         str(input), str(output), str(DEMFolder), str(gridspacingx))
-    ok = os.system(command)
-    print("Command result: {}".format(ok))
+
+    print(command)
+
+    p = subprocess.Popen(command, stdout=subprocess.PIPE, text=True, shell=True)  # text=True decodes output to string
+
+    while True:
+        line = p.stdout.readline()
+        if not line:
+            break  # No more output, subprocess finished
+
+        # Process the line to extract and print progress
+        print(f"Subprocess output: {line.strip()}")
+
+    p.wait()  # Wait for the subprocess to fully terminate
+
+    #ok = os.system(command)
+    print("Command result: {}".format(p.returncode))
     
 

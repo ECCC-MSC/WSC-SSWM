@@ -237,8 +237,8 @@ class training_dataset(bandnames):
         water_sample, land_sample = P.get_stats_and_sample(valseed, nwater, nland, max_L2W_ratio)
 
         # split sample into training points and test points
-        training_wat, test_wat = self.split_sample(water_sample, valseed, eval_frac)
-        training_land, test_land = self.split_sample(land_sample, valseed, eval_frac)
+        training_wat, test_wat = self.split_sample(water_sample, eval_frac=eval_frac)
+        training_land, test_land = self.split_sample(land_sample, eval_frac=eval_frac)
 
         TRAIN = np.concatenate((training_wat, training_land), axis=0)
         TEST = np.concatenate((test_wat, test_land), axis=0)
@@ -406,7 +406,7 @@ class imgchunker(bandnames):
         """
         
         logging.info(f"reshaping chunk with shape {chunk.shape}")
-        out = chunk.reshape((np.product(chunk.shape[0:2]), chunk.shape[2]))
+        out = chunk.reshape((np.prod(chunk.shape[0:2]), chunk.shape[2]))
         self.last_chunk_shape = chunk.shape[0:2]
         
         return out
@@ -457,10 +457,10 @@ class metric():
         
         cm = pd.crosstab(labels, predictions, rownames=['Actual Water'], colnames=['Predicted Water'])
         self.cm = {}
-        self.cm['_TP'] = cm[1][1]
-        self.cm['_TN'] = cm[0][0]
-        self.cm['_FP'] = cm[1][0]
-        self.cm['_FN'] = cm[0][1]
+        self.cm['_TP'] = cm[True][True]
+        self.cm['_TN'] = cm[False][False]
+        self.cm['_FP'] = cm[True][False]
+        self.cm['_FN'] = cm[False][True]
         
     def add_dict(self, dct, name):
         """ Add custom statistics 
