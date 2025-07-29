@@ -7,7 +7,6 @@ from osgeo import gdal
 import numpy as np
 import pandas as pd
 import logging
-import os
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn import metrics

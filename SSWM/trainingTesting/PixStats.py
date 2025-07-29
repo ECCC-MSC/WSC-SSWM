@@ -1,13 +1,11 @@
 import os
-import math
 import numpy as np
 import logging
-import pyproj
 
 from osgeo import osr, gdal
 from SSWM.trainingTesting.SRIDConverter import SRIDConverter
-from SSWM.trainingTesting.TrainingTestingutils import bin_ndarray, bandnames
 from SSWM.trainingTesting.GSWInterpolator import GSWInterpolator
+from SSWM.utils import bandnames
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +77,6 @@ class PixStats:
         return min_lat,min_lon,max_lat,max_lon
     
     def get_geotransform(self,lat0,lon0,dlat,dlon):
-        logger.info(f'Geotransform: \n lat0:{lat0},\nlon0:{lon0},\ndlat: {dlat},\n dlon{dlon}')
         geotransform=[]
         geotransform.append(lon0)           # top left x
         geotransform.append(dlon)           # w-e pixel resolution
@@ -90,7 +87,6 @@ class PixStats:
         return geotransform
     
     def to_geotiff(self, array, mask=None, grid_dims=None, f_name=None, geotransform=None, srs=None, gdal_type=gdal.GDT_Byte):
-        logger.info("input array".format())
         if not f_name:
             f_name = f'{os.path.splitext(self.base_name)[0]}_a_priori_classification.tiff'
         logger.info('saving {os.path.join(self.images_output_dir, f_name}')
@@ -113,12 +109,10 @@ class PixStats:
         output_file.GetRasterBand(1).SetNoDataValue(255)
         if mask is not None:
             logger.info('Setting invalid data to 255')
-            logger.info(f'Shapes\nMask : {mask.shape}\nData : {array.shape}')
             array[~mask]=255
             logger.info('Done')
         logger.info('Writing array')
         output_file.GetRasterBand(1).WriteArray(array)
-        logger.info('Flushing cache')
         output_file.FlushCache()
         output_file=None
         logger.info(f'Geotiff created successfully at {f_path}')
@@ -130,7 +124,6 @@ class PixStats:
 
         ds, src_srs, invert_xy = self.get_bands_infos()
         coords, nb_pixels = self.get_coords_for_file(ds, invert_xy)
-        logger.info(f'Coordinates shape: {coords.shape}')
         wgs84_coords = np.zeros((coords.shape[0], 2), order='F')
         wgs84_coords[:, 1], wgs84_coords[:, 0] = SRIDConverter.convert_from_coordinates_check_geo(coords, src_srs)
         self.coords = wgs84_coords
@@ -138,13 +131,9 @@ class PixStats:
 
         logger.info("min_lat {}, min_lon {}, max_lat {}, max_lon {} ".format(min_lat, min_lon, max_lat, max_lon))
 
-        logger.info(f'Water Presence vector (h5): {water_presence}')
         mask = np.array(ds.GetRasterBand(self.available_bands['Valid Data Pixels']).ReadAsArray(), dtype=bool)
 
         water_presence = water_presence.reshape(self.grid_dims)
-
-        logger.info(f'MASK: {mask.shape} (shape) \n {mask}')
-        logger.info(f'Water Presence: {water_presence.shape}\n {water_presence}')
 
         water_presence[~mask] = 255
         logger.info(
@@ -160,11 +149,7 @@ class PixStats:
         idx_land = np.nonzero(water_presence[idx_valid] == 0)[0]
 
         valid_vals = water_presence[idx_valid] == 1
-        # coords_valid = water_presence.ravel() != 255
-        # logger.info(f'Adding valid coordinates:{self.coords[coords_valid].shape}')
-        # hdf_writer.add_rs2_coords(self.f_path, self.coords[coords_valid], min_lat, max_lat, min_lon, max_lon, shape=self.grid_dims)
-        # logger.info(f'Water Presence: {water_presence.shape}')
-        # hdf_writer.add_water(self.f_path,idx_water)
+
         del self.coords
 
         if max_L2W_ratio:
@@ -187,6 +172,7 @@ class PixStats:
             nland = min(nwater * ratio, len(idx_water))
 
             logger.info("Num land after L2W ratio: {}".format(nland))
+            logger.info("Num water: {}".format(nwater))
 
             # take sample of water pix and land pix
         np.random.seed(valseed);
@@ -221,8 +207,6 @@ class PixStats:
 
 
     def get_coords_for_file(self,ds,invert_xy=False):
-        logger.info('Get coords for file called')
-        logger.info('invert_xy is {}'.format(invert_xy))
         (upper_left_x, x_size, x_rotation, upper_left_y, y_rotation, y_size) = ds.GetGeoTransform()
         if invert_xy:
             x = (np.arange(ds.RasterXSize,dtype=np.float32) * x_size + upper_left_x + (x_size / 2.))
@@ -233,10 +217,7 @@ class PixStats:
         xs = np.empty((ds.RasterYSize, ds.RasterXSize), dtype='float32')
         ys = np.empty((ds.RasterYSize, ds.RasterXSize), dtype='float32')
         xs[:,:], ys[:,:] = np.meshgrid(x,y, copy=False)
-        
-        logger.info(xs)
-        logger.info(ys)
-        logger.info(xs.shape)
+
         self.grid_dims = xs.shape
         nb_pixels = ds.RasterYSize * ds.RasterXSize
         coords = np.empty((nb_pixels,2), dtype='float32')

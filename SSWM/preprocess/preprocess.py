@@ -433,14 +433,8 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     imagery_files = [f.strip() for f in re.findall(".*tiff", gdal.Info(manifest))]
 
     img = gdal.Open(manifest, gdal.GA_ReadOnly)
-    pol = [img.GetRasterBand(i + 1).GetDescription() for i in range(img.RasterCount)]
+    pol = [img.GetRasterBand(i + 1).GetMetadata()['POLARIZATION'] for i in range(img.RasterCount)]
     del img
-
-    ## CHECK FOR COMPLEX VALUES
-    # =================
-    #print("{:#^84}".format('  Check for any complex values (SLC) and convert  '))
-    #complex = ProcessSLC(product_xml)
-    #print("{:#^84}".format('  Done!  '))
 
     ## CALIBRATE & FILTER IMAGERY
     # =================
@@ -505,9 +499,6 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     os.makedirs(DEM_FOLDER)
     shutil.move(TMP_DEM, DEM_FOLDER)
 
-    """
-    TODO: Depreciated! 
-    """
     orthorectify_otb(OUT_TMP, OUT_ORTHO, DEM_FOLDER, gsx)
 
 

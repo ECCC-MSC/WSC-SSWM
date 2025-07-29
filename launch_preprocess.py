@@ -35,7 +35,8 @@ def untar(cur_file, folder, s1=False):
 
     if len(os.listdir(folder))>1:
         if s1:
-            wkdir = wkdir + '.SAFE'
+            if '.SAFE' not in wkdir:
+                wkdir = wkdir + '.SAFE'
             nwkdir = os.path.join(folder, os.path.basename(wkdir).split('.')[0])
             os.rename(wkdir, nwkdir)
             wkdir = nwkdir
@@ -127,7 +128,7 @@ def preParamConfig(config, cur_file):
 
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
-    logfile = os.path.join(Config.get('Generic', 'log_dir'), "preprocess.log")
+    logfile = os.path.join(Config.get('Directories', 'log_dir'), "preprocess.log")
     logging.basicConfig(filename=logfile, level=logging.INFO,
                         format='%(asctime)s - %(name)s - [%(levelname)s] %(message)s')
     logging.getLogger().addHandler(logging.StreamHandler())

@@ -60,7 +60,7 @@ def forestClassifier(config, archive):
     # Set up message logging
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
-    logfile = os.path.join(Config.get('Generic', 'log_dir'), "forest.log")
+    logfile = os.path.join(Config.get('Directories', 'log_dir'), "forest.log")
     logging.basicConfig(filename=logfile, level=logging.INFO,
                         format='%(asctime)s - %(name)s - [%(levelname)s] %(message)s')
     logging.getLogger().addHandler(logging.StreamHandler())
@@ -110,7 +110,7 @@ def forestClassifier(config, archive):
     # Classify image
     #================
     output_img = output_basename + '.tif'
-    RF.predict_chunked(cur_file, output_img, 3000) 
+    RF.predict_chunked(cur_file, output_img, 2000)
 
     
     # Postprocess to remove false positives
