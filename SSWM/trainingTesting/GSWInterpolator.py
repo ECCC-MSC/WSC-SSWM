@@ -93,19 +93,20 @@ class GSWInterpolator:
         if len(rgi_files) > 1:
             #merge files, and crop
             outVRT = os.path.join(self.output_dir, "tmp.VRT")
-            VRT = gdal.BuildVRT(outVRT, rgi_files)
+            VRT = gdal.BuildVRT(outVRT, rgi_files, resampleAlg='cubic')
             VRT.FlushCache()
             del VRT
 
             gdal.Warp(destNameOrDestDS=outCropped, srcDSOrSrcDSTab=outVRT,
-                      outputBounds=(min_lon, min_lat, max_lon, max_lat), cropToCutline=True, copyMetadata=True)
+                      outputBounds=(min_lon, min_lat, max_lon, max_lat), cropToCutline=True, copyMetadata=True, resampleAlg='cubic')
 
         else:
             #Just crop
             gdal.Warp(destNameOrDestDS=outCropped, srcDSOrSrcDSTab=rgi_files[0],
-                      outputBounds=(min_lon, min_lat, max_lon, max_lat), cropToCutline=True, copyMetadata=True)
+                      outputBounds=(min_lon, min_lat, max_lon, max_lat), cropToCutline=True, copyMetadata=True, resampleAlg='cubic')
 
-        interp_name = 'GSW_Interpolator'
+        interp_name = os.path.basename(self.sat_f_name)
+        print(interp_name)
         interpolator = self.interpolators.setdefault(
                                             interp_name,{}).setdefault('interpolator',
                                             self.get_regular_grid_interpolator(outCropped))

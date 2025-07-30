@@ -76,16 +76,6 @@ class PixStats:
 
         return min_lat,min_lon,max_lat,max_lon
     
-    def get_geotransform(self,lat0,lon0,dlat,dlon):
-        geotransform=[]
-        geotransform.append(lon0)           # top left x
-        geotransform.append(dlon)           # w-e pixel resolution
-        geotransform.append(0)              # 0
-        geotransform.append(round(lat0,3))  # top left y
-        geotransform.append(0)              # 0
-        geotransform.append(-dlat)          # n-s pixel resolution (negative value)
-        return geotransform
-    
     def to_geotiff(self, array, mask=None, grid_dims=None, f_name=None, geotransform=None, srs=None, gdal_type=gdal.GDT_Byte):
         if not f_name:
             f_name = f'{os.path.splitext(self.base_name)[0]}_a_priori_classification.tiff'
@@ -155,19 +145,6 @@ class PixStats:
         if max_L2W_ratio:
             nwat = len(idx_water)
             nland = len(idx_land)
-            nwater = min(nwater, int(nwat * 0.33))
-            # ratio = min(max_L2W_ratio, nland // nwat)
-            # nland = min(nwater * ratio, len(idx_water))
-
-            ratio = max(nwat / nland, 0.05)
-            nland = int((nwater / ratio)) - nwater
-
-            logger.info("Num land after L2W ratio: {}".format(nland))
-            logger.info("Num water: {}".format(nwater))
-
-        if max_L2W_ratio:
-            nwat = len(idx_water)
-            nland = len(idx_land)
             ratio = min(max_L2W_ratio, nland // nwat)
             nland = min(nwater * ratio, len(idx_water))
 
@@ -232,5 +209,7 @@ class PixStats:
         interpolator = GSWInterpolator(sat_f_name=self.f_path, gsw_dir=self.gsw_path, output_dir=self.output_dir)
         min_lat, min_lon, max_lat, max_lon = self.get_bbox_coords(self.coords)
         logger.info("Bounding box: lat ({}, {}), lon({},{})".format(min_lat, max_lat, min_lon, max_lon))
-        return min_lat, min_lon, max_lat, max_lon, interpolator.get_water_presence_for_points(min_lat,max_lat,min_lon,max_lon,self.coords)
+        waterPresence = interpolator.get_water_presence_for_points(min_lat,max_lat,min_lon,max_lon,self.coords)
+        del interpolator
+        return min_lat, min_lon, max_lat, max_lon, waterPresence
 

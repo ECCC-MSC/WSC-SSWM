@@ -352,9 +352,10 @@ def create_DEM_mosaic(DEM, DEM_dir, dstfile, product="CDED",
     
     # build VRT
     VRT_path = path.join(path.dirname(dstfile), "tmp.VRT")
-    VRT = gdal.BuildVRT(VRT_path, files)
+    VRT = gdal.BuildVRT(VRT_path, files, resampleAlg='cubic')
     VRT.FlushCache()
     VRT = None
+
     
     # return VRT-only if desired
     if vrt_only:
@@ -362,7 +363,7 @@ def create_DEM_mosaic(DEM, DEM_dir, dstfile, product="CDED",
     
     # set warp parameters
 
-    ds = gdal.Translate(dstfile, VRT_path, format=format)
+    ds = gdal.Translate(dstfile, VRT_path, format=format, resampleAlg='cubic')
 
     ds.FlushCache()
     ds = None

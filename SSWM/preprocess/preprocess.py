@@ -419,7 +419,8 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     #wd = path.dirname(folder)
     manifest = os.path.join(folder, 'manifest.safe')
 
-    os.environ['OTB_MAX_RAM_HINT'] = '2000'
+    max_ram = 2500
+    os.environ['OTB_MAX_RAM_HINT'] = str(max_ram)
 
     TMP_DEM = path.join(folder, "TMP_DEM.tif")
     OUT_ORTHO = path.join(folder, "OUT_ORTHO.tif")
@@ -480,26 +481,24 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
                                      DEM_dir=DEM_dir, product=product)
 
     tmpReproj = path.join(folder, "TMP_REPROJDEM.tif")
-    gdal.Warp(tmpReproj, TMP_DEM, dstSRS='EPSG:4326')
+    gdal.Warp(tmpReproj, TMP_DEM, dstSRS='EPSG:4326', resampleAlg='cubic')
     os.remove(TMP_DEM)
     os.rename(tmpReproj, TMP_DEM)
 
-    gdal.Warp(OUT_ORTHO, manifest, dstSRS='EPSG:4326')
 
-    gr = gdal.Open(OUT_ORTHO)  # Grap output pixel spacing, will be gridspacing for ortho
+    #Per orfeotoolbox, typical geolocation grid spacing is half of DEM pixel size
+    gr = gdal.Open(TMP_DEM)  # Grap output pixel spacing, will be gridspacing for ortho.
     gt = gr.GetGeoTransform()
-    gsx = gt[1]
-    gsy = gt[5]
+    gsx = gt[1] / 2  #divide in half
 
     del (gr)
-    os.remove(OUT_ORTHO)
 
     print(gsx)
 
     os.makedirs(DEM_FOLDER)
     shutil.move(TMP_DEM, DEM_FOLDER)
 
-    orthorectify_otb(OUT_TMP, OUT_ORTHO, DEM_FOLDER, gsx)
+    orthorectify_otb(OUT_TMP, OUT_ORTHO, DEM_FOLDER, gsx, ram=max_ram)
 
 
     merge_files.append(OUT_ORTHO)

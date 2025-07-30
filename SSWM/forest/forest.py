@@ -247,6 +247,8 @@ class training_dataset(bandnames):
         self.training_targets = TRAIN[self.MASK_LABEL[0]]
         self.testing_targets = TEST[self.MASK_LABEL[0]]
 
+        del P
+
         
     def split_sample(self, sample, eval_frac=0.2):
         """ Randomly split sample into training and test subsamples 

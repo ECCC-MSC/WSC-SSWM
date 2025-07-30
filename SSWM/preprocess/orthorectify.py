@@ -31,7 +31,8 @@ def orthorectify_dem_rpc(input, output, DEM, dtype=None):
                 creationOptions = ["TILED=YES", "BLOCKXSIZE=256", "BLOCKYSIZE=256"],
                 rpc = True,
                 multithread=True,
-                outputType=dtype)
+                outputType=dtype,
+                resampleAlg='cubic')
     
     # run warp
     gdal.Warp(output, input, options=optns)
@@ -39,7 +40,7 @@ def orthorectify_dem_rpc(input, output, DEM, dtype=None):
     return(True)
 
 
-def orthorectify_otb(input, output, DEMFolder, gridspacingx):
+def orthorectify_otb(input, output, DEMFolder, gridspacingx, ram=1000):
     """ Orthorectify raster using orfeotoolbox Ortho
 
     Parameters
@@ -57,9 +58,11 @@ def orthorectify_otb(input, output, DEMFolder, gridspacingx):
     -------
     """
 
-    command = '''otbcli_OrthoRectification -io.in {} -io.out {} -map wgs -elev.dem {} -interpolator linear -opt.ram 2000 -opt.gridspacing {}'''.format(
-        str(input), str(output), str(DEMFolder), str(gridspacingx))
+    command = '''otbcli_OrthoRectification -io.in {} -io.out {} -map wgs -elev.dem {} -interpolator linear -opt.ram {} -opt.gridspacing {}'''.format(
+        str(input), str(output), str(DEMFolder), str(ram), str(gridspacingx))
 
+    print(command)
+    '''
     print(command)
 
     p = subprocess.Popen(command, stdout=subprocess.PIPE, text=True, shell=True)  # text=True decodes output to string
@@ -73,8 +76,9 @@ def orthorectify_otb(input, output, DEMFolder, gridspacingx):
         print(f"Subprocess output: {line.strip()}")
 
     p.wait()  # Wait for the subprocess to fully terminate
-
-    #ok = os.system(command)
-    print("Command result: {}".format(p.returncode))
+    '''
+    ok = os.system(command)
+    #print("Command result: {}".format(p.returncode))
+    print(ok)
     
 

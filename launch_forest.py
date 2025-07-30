@@ -110,9 +110,9 @@ def forestClassifier(config, archive):
     # Classify image
     #================
     output_img = output_basename + '.tif'
-    RF.predict_chunked(cur_file, output_img, 2000)
+    RF.predict_chunked(cur_file, output_img, 1000)
 
-    
+    del RF
     # Postprocess to remove false positives
     #=======================================
     output_polygon = output_basename + "_classified_filt.gpkg"
