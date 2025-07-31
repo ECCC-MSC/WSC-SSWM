@@ -3,7 +3,6 @@ This script is used to create a hdf5 file from an image, train a random
 forest clasifier and then classify the image
 """
 
-import argparse
 import configparser
 import logging
 import os
@@ -12,9 +11,10 @@ import sys
 import tarfile
 import zipfile
 
-from SSWM.utils import filedaemon, bandnames
+from SSWM.utils import bandnames
 from SSWM.forest import forest, postprocess
 
+CHUNK_SIZE = 1000
     
 def untar_VRT(cur_file):
     """ Extract files from archive 
@@ -110,7 +110,7 @@ def forestClassifier(config, archive):
     # Classify image
     #================
     output_img = output_basename + '.tif'
-    RF.predict_chunked(cur_file, output_img, 1000)
+    RF.predict_chunked(cur_file, output_img, CHUNK_SIZE)
 
     del RF
     # Postprocess to remove false positives

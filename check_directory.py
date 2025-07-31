@@ -6,7 +6,6 @@ Checks a directory for the existence of certain files.
 import configparser
 import os
 
-from SSWM import utils
 from launch_preprocess import preParamConfig
 from launch_forest import forestClassifier
 
@@ -14,8 +13,7 @@ if __name__ == "__main__":
     Config = configparser.ConfigParser()
     ##User input##
     # Get keywords from an INI file
-    config = '' #Full path to classify.ini
-    task = ''  #Either LaunchPreprocessor or LaunchClassifier as string
+    config = r'PATH TO CONFIG' #Full path to classify.ini
     ##User Input End##
 
     Config.read(config)
@@ -29,5 +27,5 @@ if __name__ == "__main__":
 
         #Then, classify
         #forestClassifier(config, os.path.join(folder, product))
-        #forestClassifier(config, result)
+        forestClassifier(config, result)
 

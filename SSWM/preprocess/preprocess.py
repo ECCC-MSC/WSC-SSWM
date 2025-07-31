@@ -25,6 +25,9 @@ from SSWM.preprocess.filters import lee_filter2
 import SSWM.preprocess.DEM as de
 from SSWM.utils import bandnames
 
+MAX_RAM = 2500
+
+
 def preproRS2(product_xml, DEM_dir, cleanup=True, product="CDED"):
     """ Preprocess Radarsat-2 file in preparation for classification 
     
@@ -419,8 +422,7 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     #wd = path.dirname(folder)
     manifest = os.path.join(folder, 'manifest.safe')
 
-    max_ram = 2500
-    os.environ['OTB_MAX_RAM_HINT'] = str(max_ram)
+    os.environ['OTB_MAX_RAM_HINT'] = str(MAX_RAM)
 
     TMP_DEM = path.join(folder, "TMP_DEM.tif")
     OUT_ORTHO = path.join(folder, "OUT_ORTHO.tif")
@@ -498,7 +500,7 @@ def preproS1(folder, DEM_dir, cleanup=True, product="CDED"):
     os.makedirs(DEM_FOLDER)
     shutil.move(TMP_DEM, DEM_FOLDER)
 
-    orthorectify_otb(OUT_TMP, OUT_ORTHO, DEM_FOLDER, gsx, ram=max_ram)
+    orthorectify_otb(OUT_TMP, OUT_ORTHO, DEM_FOLDER, gsx, ram=MAX_RAM)
 
 
     merge_files.append(OUT_ORTHO)
