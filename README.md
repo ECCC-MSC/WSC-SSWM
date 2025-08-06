@@ -1,14 +1,5 @@
 # WSC-SSWM
 
-####WARNING####
-
-This branch is for INFORMATION PURPOSES ONLY!!!
-The main branch is currently full of garbage functions and out of date code. This branch represents a purge, along with an 
-approximate update of current methods. IT HAS NOT BEEN TESTED AND WILL LIKELY NOT RUN! USE WITH CAUTION. We will (probably) update 
-main someday with a more up to date version based loosely on this purged/updated version.
-
-###############
-
 ## Summary
 This script uses Random Forest machine learning to automatically extract water bodies from RCM data. The Random Forest 
 machine learning allows flexiblity for the script to be easily modified for any other Satellite input.
@@ -29,7 +20,8 @@ cover, versus optical sensors that require sunlight and direct sight of the surf
 of radar satellite (RADARSAT-1 launched in 1995, and RADARSAT-2 launched in 2007), having three satellites in a
 constellation allows for access to nearly the entire country each day. This large accessability allows NHS to monitor
 highly volatile waterbodies, such as those in the prairies, on a biweekly basis with high spatial resolution products
-(5m).  **Other satellite source data can easily be incorporated with only small modificaitons to the code to ingest them 
+(5m). In addition to RCM, SSWM also supports SAR data from for ESA's Sentinel-1 mission, increasing the quantity of SAR data
+available for surface water mapping. **Other satellite source data can easily be incorporated with only small modificaitons to the code to ingest them 
 to the correct format**
 
 ## Random forest machine learning 
