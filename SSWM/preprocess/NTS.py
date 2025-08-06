@@ -191,7 +191,7 @@ class nts:
         minlon = -144 + wo[1] + (tile[0] * wo[0])
         maxlat = minlat + 1
         maxlon = minlon + wo[1]
-        bbox = makebbox(maxlat, maxlon, minlat, minlon)
+        bbox = self.makebbox(maxlat, maxlon, minlat, minlon)
         return(bbox)
         
     def id250(self, tile250):
@@ -397,7 +397,7 @@ def valid_nts_tiles(tilesfile, return_50k = False):
     if return_50k:
         out = t50k
     else:
-        t250k = np.unique([t[0:4] for t in t50])
+        t250k = np.unique([t[0:4] for t in t50k])
         out = t250k
     
     return(out)

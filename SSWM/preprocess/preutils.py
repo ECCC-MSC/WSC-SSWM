@@ -1,8 +1,22 @@
-import gdal
+from osgeo import gdal
 import numpy as np
 import os
 import re
 import xml.etree.ElementTree as ET
+
+
+def calibrateS1(img, lut='sigma'):
+    """Using Orfeotoolbox, calibrate an S1 product. Calibration is performed per data band, and are then stacked."""
+
+    outname = os.path.splitext(img)[0] + '_sigma.tiff'
+
+    command = f"otbcli_SARCalibration -in {img} -out {outname} -lut {lut}"
+    ok = os.system(command)
+    print(ok)
+
+    os.remove(img)
+    os.rename(outname, img)
+
 
 def cloneRaster(img, newRasterfn, ret=True, all_bands=True, coerce_dtype=None, copy_data=False):
     """ make empty raster container from gdal raster object. Does not copy data
@@ -619,8 +633,8 @@ class RS2(Radar):
     @classmethod
     def product_xml_pol_modes(cls, xml):
         """ Return a list of polarization modes associated with an RS-2 product.file """
-        files = product_xml_imagery_files
-        modes = re.findall("_([HV]*)\\.tif", ','.join(imagery_files))
+        files = cls.product_xml_imagery_files(xml)
+        modes = re.findall("_([HV]*)\\.tif", ','.join(files))
         return(modes)
     
     @classmethod
@@ -687,3 +701,4 @@ class S1(Radar):
 
     def __init__(self):
         pass
+

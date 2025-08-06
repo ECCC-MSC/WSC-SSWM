@@ -145,14 +145,7 @@ class bandnames:
     
     MASK_LABEL = ['water_mask']
     
-    DETECTED_BANDS = ['HH', 'HV','VV', 'VH', 'RH', 'RV', 'SE_I', 'SE_P']
-    
-    DERIVED_BANDS = ['energy_HH', 'energy_HV', 
-                     'energy_VH', 'energy_VV',
-                     'energy_RH', 'energy_RV',
-                     'energy_SE_I', 'energy_SE_P']
-    
-    DATA_BANDS = DETECTED_BANDS + DERIVED_BANDS  # ORDER MATTERS HERE               
+    DATA_BANDS = ['HH', 'HV','VV', 'VH', 'RH', 'RV', 'SE_I', 'SE_P']
     
     VALID_PIX_BAND = ['Valid Data Pixels']
     

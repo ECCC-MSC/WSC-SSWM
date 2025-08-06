@@ -35,7 +35,8 @@ def untar(cur_file, folder, s1=False):
 
     if len(os.listdir(folder))>1:
         if s1:
-            wkdir = wkdir + '.SAFE'
+            if '.SAFE' not in wkdir:
+                wkdir = wkdir + '.SAFE'
             nwkdir = os.path.join(folder, os.path.basename(wkdir).split('.')[0])
             os.rename(wkdir, nwkdir)
             wkdir = nwkdir
@@ -46,7 +47,7 @@ def untar(cur_file, folder, s1=False):
     return file
 
 
-def preprocess(folder, DEM_directory, finished_result, DEMType, logger, satellite = 'RS2'):
+def preprocess(cur_file, folder, DEM_directory, finished_result, DEMType, logger, satellite = 'RS2'):
     """ Run preprocessing on next file and move results to correct directory
     
     Gets the next file from the manifest, processes it and moves the results
@@ -74,13 +75,7 @@ def preprocess(folder, DEM_directory, finished_result, DEMType, logger, satellit
                 'S1': S1}
                 
     R = sat_dict[satellite]
-         
-    # read manifest / terminate if there is no manifest
-    manifest = os.path.join(folder, 'manifest.txt')
-    cur_file = filedaemon.manifest_get_next(manifest)
-    if not cur_file:
-        sys.exit(1)
-    cur_file = os.path.join(folder, cur_file)
+
     if cur_file.endswith('.tar') or cur_file.endswith('.zip'):
         cur_zip = cur_file
         if satellite == 'S1':
@@ -113,29 +108,32 @@ def preprocess(folder, DEM_directory, finished_result, DEMType, logger, satellit
         clean = lambda *args: None
     
     # move zipfiles and clean up
-    print(zip_out)
     shutil.move(zip_out, os.path.join(finished_result, os.path.basename(zip_out)))
     shutil.rmtree(cur_file)
     clean()
 
+    return os.path.join(finished_result, os.path.basename(zip_out))
 
-def preParamConfig(config):
+
+def preParamConfig(config, cur_file):
     Config = configparser.ConfigParser()
     Config.read(config)
 
     # preprocessor keywords
-    folder          = Config.get('LaunchPreprocessor', 'watch_folder')
-    DEM_dir         = Config.get('Preprocess', 'DEM_dir')
-    finished_result = Config.get('LaunchClassifier', 'watch_folder')
-    sat             = Config.get('LaunchPreprocessor', 'satellite_profile')
-    DEMType         = Config.get('LaunchPreprocessor', 'DEMType')
+    folder          = Config.get('Directories', 'watch_folder')
+    DEM_dir         = Config.get('Directories', 'DEM_dir')
+    finished_result = Config.get('Directories', 'TMP')
+    sat             = Config.get('Params', 'satellite_profile')
+    DEMType         = Config.get('Params', 'DEMType')
 
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
-    logfile = os.path.join(Config.get('Generic', 'log_dir'), "preprocess.log")
+    logfile = os.path.join(Config.get('Directories', 'log_dir'), "preprocess.log")
     logging.basicConfig(filename=logfile, level=logging.INFO,
                         format='%(asctime)s - %(name)s - [%(levelname)s] %(message)s')
     logging.getLogger().addHandler(logging.StreamHandler())
     logger = logging.getLogger()
 
-    preprocess(folder, DEM_dir, finished_result, DEMType, logger,  satellite=sat)
+    zip_out = preprocess(cur_file, folder, DEM_dir, finished_result, DEMType, logger,  satellite=sat)
+
+    return zip_out

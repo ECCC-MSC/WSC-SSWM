@@ -3,7 +3,6 @@ This script is used to create a hdf5 file from an image, train a random
 forest clasifier and then classify the image
 """
 
-import argparse
 import configparser
 import logging
 import os
@@ -12,33 +11,10 @@ import sys
 import tarfile
 import zipfile
 
-from SSWM.trainingTesting.PixStats import PixStats
-from SSWM.utils import filedaemon, bandnames
+from SSWM.utils import bandnames
 from SSWM.forest import forest, postprocess
 
-
-def get_cur_file(folder):
-    """ Read current file from textfile manifest
-    
-    *Parameters*
-
-    folder : str
-        Path to job directory containing manifest and preprocessed image archives
-    
-    *Returns*
-
-    tuple
-        (1) Path at which to create next file to process
-        (2) Directory to which the archived files should be extracted
-    """
-    manifest = os.path.join(folder, 'manifest.txt')
-    zip_file = filedaemon.manifest_get_next(manifest)
-
-    exdir = os.path.splitext(zip_file)[0]
-    fname = os.path.splitext(os.path.basename(zip_file))[0]
-    cur_file = os.path.join(exdir, fname + '.vrt')    
-    
-    return cur_file, exdir
+CHUNK_SIZE = 1000
     
 def untar_VRT(cur_file):
     """ Extract files from archive 
@@ -76,7 +52,7 @@ def failure(output_h5, exdir, cur_file, images_output_dir, msg):
         f.writelines(msg)
     sys.exit(0)
             
-def forestClassifier(config):
+def forestClassifier(config, archive):
     # Load configuration file
     Config = configparser.ConfigParser()
     Config.read(config)
@@ -84,122 +60,68 @@ def forestClassifier(config):
     # Set up message logging
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
-    logfile = os.path.join(Config.get('Generic', 'log_dir'), "forest.log")
+    logfile = os.path.join(Config.get('Directories', 'log_dir'), "forest.log")
     logging.basicConfig(filename=logfile, level=logging.INFO,
                         format='%(asctime)s - %(name)s - [%(levelname)s] %(message)s')
     logging.getLogger().addHandler(logging.StreamHandler())
     logger = logging.getLogger()
     
     # Classifier keywords
-    gsw_path          = Config.get('Classification', 'gsw_path')
-    training_data     = Config.get('Classification', 'training_data')
-    images_output_dir = Config.get('Classification', 'output')
-    num_procs         = Config.getint('Classification', 'num_procs')
-    npz_dir           = Config.get('Classification', 'tmp')
+    gsw_path          = Config.get('Directories', 'gsw_path')
+    images_output_dir = Config.get('Directories', 'output')
+    num_procs         = Config.getint('Params', 'num_procs')
        
     # Get current file
 
-
-    folder = Config.get('LaunchClassifier', 'watch_folder')
-    vrt, exdir = get_cur_file(folder)
-    if not vrt:
-        sys.exit(0)
-    vrt = os.path.join(folder, vrt)
-    exdir = os.path.join(folder, exdir)
-
-    archive = exdir + '.tar'
     cur_file, exdir = untar_VRT(archive)
     logging.info(f"opening archive from manifest: {cur_file}")
     
     scene_id = os.path.splitext(os.path.basename(cur_file))[0]
-    
-    
-    # Create HDF5 for training, skip if it already exists 
-    #====================================================
-    output_h5 = scene_id + ".h5"
-    output_h5 = os.path.join(training_data, output_h5)
-    
-    P = PixStats(cur_file, 
-                 output_dir=training_data, 
-                 gsw_path=gsw_path, 
-                 images_output_dir=images_output_dir, 
-                 fst_converter_path=npz_dir)
-                 
-    if not os.path.isfile(output_h5):   
-        for band in bandnames.DATA_BANDS:
-            if not band in P.valid_bands:
-                P.valid_bands.append(band)
-        P.available_bands = P.get_valid_bands()
-        valid = P.get_stats(write_water_mask=False)
-            
-    else:
-        logging.info("h5 file already exists - skipping creation of new")
-    
-  
-    # Select training data, fit model and get stats
-    #==============================================
-    if os.path.isdir(Config.get('Classification', 'train_on')):
-        pass
-        # get file list from dir and 
-    elif os.path.isfile(Config.get('Classification', 'train_on')):
-        training_file = Config.get('Classification', 'train_on')
-    else:
-        training_file = output_h5
         
     output_basename = os.path.join(images_output_dir, scene_id)
     output_report = os.path.join(images_output_dir, scene_id + '.txt')
-    test_report = os.path.join(images_output_dir, scene_id + '_testreport.txt')
+
+    seed = 12345
     
-    RF = forest.waterclass_RF(n_estimators=500, criterion='entropy', oob_score=True, n_jobs=-1)
+    RF = forest.waterclass_RF(random_state=seed, n_estimators=250, criterion='entropy', oob_score=True, n_jobs=-1)
     
     try:
-        RF.train_from_h5(training_file, nland=7500, nwater=2500, eval_frac=0.25)
-    
+        #RF.train_from_h5(training_file, nland=7500, nwater=2500, eval_frac=0.25)
+        #A max land-water ratio of 10 is hardcoded here, nland doesn't mean anything
+        RF.train_from_image(cur_file, exdir, gsw_path, seed, nland=750, nwater=5000, eval_frac=0.25)
+
     except ZeroDivisionError as e:
         logging.error("No water pixels found in scene. Skipping image.")
         msg = ("No overlapping water pixels were found in this scene."
                 "Classification for this image was not performed.")
-        failure(output_h5, exdir, images_output_dir, msg)
+        logging.error(msg)
+        failure(exdir)
  
     RF.rf.num_procs = num_procs
     RF.save_evaluation(output_report)
-    RF.test_from_h5(output_h5, nwater=625, output=test_report)
     
     if RF.results['m']['F1'] < bandnames.MIN_F1:
         msg = ("Poor classification quality found during model fitting"
                 " (F1 < {}). "
                 "Classification for this image was not performed. Change F1 threshold in the "
-                "'bandnames' class (DUAP/utils.py)".format(bandnames.MIN_F1))
-        failure(output_h5, exdir, cur_file, images_output_dir, msg)
+                "'bandnames' class (utils.py)".format(bandnames.MIN_F1))
+        logging.error(msg)
         
     # Classify image
     #================
     output_img = output_basename + '.tif'
-    RF.predict_chunked(cur_file, output_img, 3000) 
+    RF.predict_chunked(cur_file, output_img, CHUNK_SIZE)
 
-    
+    del RF
     # Postprocess to remove false positives
     #=======================================
-    pythonexe = Config.get('Postprocess', 'python3')
-    gdalpolypath = Config.get('Postprocess', 'polygonize')
     output_polygon = output_basename + "_classified_filt.gpkg"
     low_estimate = output_basename + "_classified_filt.tif" # created by .postprocess()
-    high_estimate = output_basename + "_classified.tif"
-    high_poly = output_basename + "_classified.gpkg"
     
-    postprocess.postprocess(output_img, output_polygon, pythonexe, gdalpolypath)
+    postprocess.postprocess(output_img, output_polygon, output_report)
     postprocess.rasterize_inplace(low_estimate, output_polygon)
-    postprocess.max_filter_inplace(low_estimate, band=1, size=3) # testing
-    
-    postprocess.postprocess_highestimate(output_img, high_poly, pythonexe, gdalpolypath)
-    
-    
-    # Prepare for FST creation by making *.npz files
-    #===============================================
-    P.prepare_from_geotif(classified_img=high_estimate, target_resolution=200, name_suffix='_perc_cov_lowres')
-    P.prepare_from_geotif(classified_img=low_estimate,  target_resolution=200, name_suffix='_perc_cov_lowres_filt')
-    
-    
+
+
     # Clean up
     #=========
     logger.info("cleaning up")

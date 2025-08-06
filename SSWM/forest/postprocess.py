@@ -1,9 +1,11 @@
 """
 Postprocessing for probability images generated using random forest classification
 """
-
-import gdal
+from PIL.features import features
+from osgeo import gdal, osr
 import geopandas as gp
+import rasterio
+from rasterio import features
 import logging
 import numpy as np
 import os
@@ -20,7 +22,7 @@ import SSWM.preprocess.preutils as du
 
 logging = logging.getLogger(__name__)
 
-def postprocess(classified_img, output_poly, pythonexe, gdalpolypath, window=7):
+def postprocess(classified_img, output_poly, extrasTXT, window=7):
     """ Postprocess a classified probability image to remove false positives
 
     using a techinque inspired by Bolanos et al. (2013)
@@ -34,39 +36,86 @@ def postprocess(classified_img, output_poly, pythonexe, gdalpolypath, window=7):
     pythonexe : str
         path to python executable
     gdalpolypath : str
-        path to gdal_polygonize.py file 
+        path to gdal_polygonize.py file
+    extrasTXT : str
+        path containing RF model quality metrics
+    window : int
+        window size to use for filtering (Default 7)
     """
     
     binary_cls = os.path.splitext(classified_img)[0] + "_classified_filt.tif"
     tmp_polygons = os.path.splitext(classified_img)[0] + "_tmppoly.gpkg"
  
     modefilter(classified_img, output=binary_cls, window=window)
-    max_filter_inplace(binary_cls, band=1, size=3) # testing
+    #max_filter_inplace(binary_cls, band=1, size=3) # testing
 
     set_nodata(binary_cls, nodata=0)
-    polygonize(tmp_polygons, binary_cls, pythonexe=pythonexe, gdalpolypath = gdalpolypath) 
+    #polygonize(tmp_polygons, binary_cls, pythonexe=pythonexe, gdalpolypath = gdalpolypath)
+
+    with rasterio.open(binary_cls) as srcfile:
+        ds_features = features.dataset_features(srcfile, bidx=1)
+        gdf = gp.GeoDataFrame.from_features(ds_features, crs=srcfile.crs)
+
+    gdf.to_file(tmp_polygons)
+
     print("Calculating zonal statistics")
-    stats = pd.DataFrame(zonal_stats(tmp_polygons, classified_img, stats="mean max") )
-    
+    #stats = pd.DataFrame(zonal_stats(tmp_polygons, classified_img, stats="mean max") )
+
+    stats = pd.DataFrame(gp.read_file(tmp_polygons))
+
+    # Read performace metrics from txt
+    openExtras = open(extrasTXT, 'r')
+    name = os.path.splitext(os.path.basename(binary_cls))[0]
+    components = name.split('_')
+    datetimestr = str(components[5] + components[6])
+
+    logging.info(name)
+    logging.info(datetimestr)
+
+    names = pd.Series([str(name)] * len(stats), dtype='object')
+    stats['SceneID'] = names
+    dates = pd.Series([datetimestr] * len(stats), dtype='object')
+    stats['Date'] = dates
+
+    count = 0
+    extras = []
+    for line in openExtras:
+        if line.strip() == '': continue
+        if count > 7:
+            break
+
+        print(line)
+        val = line.split('=')[1]
+        val = val.strip()
+        extras.append(val)
+        count += 1
+
+    openExtras = None
+
+    TN = np.array([extras[0]] * len(stats), dtype='int64')
+    stats['TrueNegative'] = TN
+    FN = np.array([extras[1]] * len(stats), dtype='int64')
+    stats['FalseNegative'] = FN
+    FP = np.array([extras[2]] * len(stats), dtype='int64')
+    stats['FalsePositive'] = FP
+    TP = np.array([extras[3]] * len(stats), dtype='int64')
+    stats['TruePositive'] = TP
+    PREC = np.array([extras[5]] * len(stats), dtype='float64')
+    stats['Precision'] = PREC
+    REC = np.array([extras[7]] * len(stats), dtype='float64')
+    stats['Recal'] = REC
+    F1 = np.array([extras[6]] * len(stats), dtype='float64')
+    stats['F1'] = F1
+
     #  Add attributes and filter
     polys = gp.read_file(tmp_polygons)
     for col in stats:
         polys[col] = stats[col]
-   
-    #polys = polys[(polys['max']==100) & (polys['mean']>= 80)]
-    polys = polys[(polys['max']==100)]
     
     if len(polys):
         polys.to_file(output_poly, driver='GPKG')
     
     os.remove(tmp_polygons)
-
-def postprocess_highestimate(classified_img, output_poly, pythonexe, gdalpolypath):
-    """Polygonize regions without filtering"""
-    binary_cls = os.path.splitext(classified_img)[0] + "_classified.tif"
-    grow_regions(classified_img, binary_cls)
-    set_nodata(binary_cls, nodata=0)
-    polygonize(output_poly, binary_cls, pythonexe=pythonexe, gdalpolypath=gdalpolypath) 
     
 def threshold(input, val=50):
     """ Threshold a raster image and return the new array """
@@ -86,7 +135,7 @@ def modefilter(input, output, window=7):
 
     # Write 
     out50 = np.empty_like(p50)
-    modal(p50,  selem=np.ones((window,window)), out=out50)
+    modal(p50,  np.ones((window,window)), out50)
     p50 = None
     du.write_array_like(input, output, out50, dtype=2)
 
@@ -97,7 +146,7 @@ def grow_regions(input, output, window=3, val=50):
     
     # Write 
     out50 = np.empty_like(p50)
-    modal(p50,  selem=np.ones((window,window)), out=out50)
+    modal(p50,  np.ones((window,window)), out50)
     p50 = None
     maximum_filter(out50,  size=window, output=out50)
     du.write_array_like(input, output, out50, dtype=2)
@@ -145,47 +194,7 @@ def rasterize_inplace(rast, inshape, prefill=0):
     rst = gdal.Open(rast, gdal.GA_Update)
     gdal.Rasterize(rst, inshape, burnValues=[1])
     
-    del rst 
-  
-def polygonize(output, rast,  pythonexe="python",
-                            gdalpolypath = "/usr/bin/gdal", fmt="GPKG", shell=False):
-    """ Convert raster to polygons
-    
-    The input raster should be equal to 1 wherever a polygon is desired and 
-    zero elsewhere. The raster nodata value should also be set to zero for
-    maximum performance 
-    
-    *Parameters*
-    
-    output : str
-        path to output polygon file with file extension
-    rast : str
-        path to raster file that will be polygonized
-    pythonexe : str
-        path to python executable
-    gdalpolypath : str
-        path to gdal_polygonize.py file 
-    fmt : str
-        GDAL-compatible format for output polygons
-    shell : boolean
-        Passed to subprocess. Experimental.
-    
-    *Returns*
-    
-    int
-        return code for the subprocess.call function
-    """
-    
-    print("Converting raster to polygons")
-    
-    if os.path.isfile(output):
-        os.remove(output)
-    result = subprocess.call([pythonexe, gdalpolypath, rast, output, "-f", fmt], shell=shell)
-    if result != 0:
-        raise RuntimeError("Error during subprocess call to GDAL polygonize")
-    
-    return(result)                        
-         
+    del rst
 
 def raststats(inshape, raster):
     """ calculate mean and max value of a raster in each polygon """
@@ -224,9 +233,7 @@ if __name__ == "__main__":
     outpoly = os.path.splitext(img)[0] + "_classified_filt.gpkg"
     
     postprocess(img, outpoly, python, gdalpoly, window=window)
-    if args.high_estimate:
-        highpoly = os.path.splitext(img)[0] + "_classified.gpkg"
-        postprocess_highestimate(img, highpoly, python, gdalpoly)
+
 
 
 
