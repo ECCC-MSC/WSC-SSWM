@@ -35,8 +35,8 @@ false-positives, and presented in both raster and vector formats. Additional det
 presented by Millard et al. 2020.
 
 ## This repository
-This repository contains all the nessesary Python and Cython files to run the algorithm, which consists of two parts:
-1) Preprocessing SAR scenes, mainly calibration, speckle-filtering, orthorectification, and energy-band creation. 
+This repository contains all the nessesary Python files to run the algorithm, which consists of two parts:
+1) Preprocessing SAR scenes, mainly calibration, speckle-filtering and orthorectification. 
 2) Classifying preprocessed SAR data as water/non-water using the RF model. 
 
 ### Preparing your environment
